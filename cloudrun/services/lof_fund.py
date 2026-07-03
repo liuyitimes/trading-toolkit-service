@@ -1,16 +1,11 @@
+import logging
+
 import akshare as ak
 import pandas as pd
-import numpy as np
 
+from utils.convert import safe_float
 
-def safe_float(val, default=0):
-    """安全转换为float"""
-    try:
-        if pd.isna(val):
-            return default
-        return float(val)
-    except:
-        return default
+logger = logging.getLogger('trading_toolkit')
 
 
 def get_lof_list():
@@ -21,7 +16,7 @@ def get_lof_list():
         try:
             df = ak.fund_etf_spot_em()
         except Exception as e:
-            print(f'获取ETF数据失败: {e}')
+                logger.warning(f'获取ETF数据失败: {e}')
             # 回退到 fund_lof_spot_em
             try:
                 df = ak.fund_lof_spot_em()
@@ -77,7 +72,7 @@ def get_lof_list():
             })
         return result
     except Exception as e:
-        print(f'获取LOF列表失败: {e}')
+        logger.warning(f'获取LOF列表失败: {e}')
         return []
 
 
@@ -96,7 +91,7 @@ def get_lof_opportunities():
             'discount': sorted_discount
         }
     except Exception as e:
-        print(f'获取LOF套利机会失败: {e}')
+        logger.warning(f'获取LOF套利机会失败: {e}')
         return {'premium': [], 'discount': []}
 
 
@@ -117,8 +112,9 @@ def get_lof_market_summary():
             'top_premium': round(max(premiums), 2),
             'positive_count': positive_count,
             'positive_rate': round(positive_count / len(lof_list) * 100, 1),
-            'paused_count': paused_count
+            'paused_count': paused_count,
+            'arbitrage_count': sum(1 for item in lof_list if item.get('成交额', 0) >= 1000000 and item.get('溢价率', 0) >= 3),
         }
     except Exception as e:
-        print(f'获取LOF市场概览失败: {e}')
+        logger.warning(f'获取LOF市场概览失败: {e}')
         return None

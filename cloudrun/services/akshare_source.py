@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 """AkshareSource 实现 — 封装 akshare 实时数据调用"""
 
+import logging
+
 import akshare as ak
 import pandas as pd
 
 from services.base import BaseDataSource
 from services.convertible_bond import (
-    safe_float,
     get_market_temperature,
     get_convertible_bond_list,
     get_convertible_bond_detail,
@@ -26,6 +27,9 @@ from services.hk_ipo import (
 from services.normalizer import (
     normalize_lof_list,
 )
+from utils.convert import safe_float
+
+logger = logging.getLogger('trading_toolkit')
 
 
 def _apply_convertible_filters(items: list, **kwargs) -> dict:
@@ -101,7 +105,7 @@ class AkshareSource(BaseDataSource):
             # 底层直接输出英文字段，无需 normalize
             return _apply_convertible_filters(rows, **kwargs)
         except Exception as e:
-            print(f'[AkshareSource] get_convertible_list 失败: {e}')
+            logger.warning(f'[AkshareSource] get_convertible_list 失败: {e}')
             return {'total': 0, 'page': 1, 'page_size': 100, 'items': []}
 
     def get_convertible_signals(self) -> dict:
@@ -112,7 +116,7 @@ class AkshareSource(BaseDataSource):
             # 底层直接输出英文字段，无需 normalize
             return raw
         except Exception as e:
-            print(f'[AkshareSource] get_convertible_signals 失败: {e}')
+            logger.warning(f'[AkshareSource] get_convertible_signals 失败: {e}')
             return {'double_low': [], 'force_redeem': [], 'discount': [], 'down_revised': []}
 
     def get_convertible_detail(self, code: str) -> dict:
@@ -148,7 +152,7 @@ class AkshareSource(BaseDataSource):
 
             return result
         except Exception as e:
-            print(f'[AkshareSource] get_convertible_detail 失败: {e}')
+            logger.warning(f'[AkshareSource] get_convertible_detail 失败: {e}')
             return {}
 
     def get_convertible_temperature(self) -> dict:
@@ -156,7 +160,7 @@ class AkshareSource(BaseDataSource):
             result = get_market_temperature()
             return result if result else {}
         except Exception as e:
-            print(f'[AkshareSource] get_convertible_temperature 失败: {e}')
+            logger.warning(f'[AkshareSource] get_convertible_temperature 失败: {e}')
             return {}
 
     # ---- 待发/配售 ----
@@ -166,7 +170,7 @@ class AkshareSource(BaseDataSource):
             rows = get_pending_bonds()
             return rows if rows else []
         except Exception as e:
-            print(f'[AkshareSource] get_convertible_pending 失败: {e}')
+            logger.warning(f'[AkshareSource] get_convertible_pending 失败: {e}')
             return []
 
     # ---- LOF ----
@@ -178,7 +182,7 @@ class AkshareSource(BaseDataSource):
                 return []
             return normalize_lof_list(rows)
         except Exception as e:
-            print(f'[AkshareSource] get_lof_list 失败: {e}')
+            logger.warning(f'[AkshareSource] get_lof_list 失败: {e}')
             return []
 
     def get_lof_opportunities(self) -> dict:
@@ -191,7 +195,7 @@ class AkshareSource(BaseDataSource):
                 'discount': normalize_lof_list(raw.get('discount', [])),
             }
         except Exception as e:
-            print(f'[AkshareSource] get_lof_opportunities 失败: {e}')
+            logger.warning(f'[AkshareSource] get_lof_opportunities 失败: {e}')
             return {'premium': [], 'discount': []}
 
     def get_lof_summary(self) -> dict:
@@ -199,7 +203,7 @@ class AkshareSource(BaseDataSource):
             result = get_lof_market_summary()
             return result if result else {}
         except Exception as e:
-            print(f'[AkshareSource] get_lof_summary 失败: {e}')
+            logger.warning(f'[AkshareSource] get_lof_summary 失败: {e}')
             return {}
 
     # ---- 港股 IPO ----
@@ -208,21 +212,21 @@ class AkshareSource(BaseDataSource):
         try:
             return _raw_hk_ipo_list()
         except Exception as e:
-            print(f'[AkshareSource] get_hk_ipo_list 失败: {e}')
+            logger.warning(f'[AkshareSource] get_hk_ipo_list 失败: {e}')
             return []
 
     def get_hk_ipo_upcoming(self) -> list:
         try:
             return _raw_hk_ipo_upcoming()
         except Exception as e:
-            print(f'[AkshareSource] get_hk_ipo_upcoming 失败: {e}')
+            logger.warning(f'[AkshareSource] get_hk_ipo_upcoming 失败: {e}')
             return []
 
     def get_hk_ipo_summary(self) -> dict:
         try:
             return _raw_hk_ipo_summary()
         except Exception as e:
-            print(f'[AkshareSource] get_hk_ipo_summary 失败: {e}')
+            logger.warning(f'[AkshareSource] get_hk_ipo_summary 失败: {e}')
             return {}
 
     # ---- 市场情绪 ----
@@ -274,7 +278,7 @@ class AkshareSource(BaseDataSource):
                         result['zz1000_price'] = round(price, 2)
                         result['zz1000_change'] = round(change_pct, 2)
         except Exception as e:
-            print(f'[AkshareSource] 新浪指数行情失败: {e}')
+            logger.warning(f'[AkshareSource] 新浪指数行情失败: {e}')
 
         # 1.5 北交所成交额（通过bj899050日线推算）
         if result.get('sh_volume', 0) > 0:
@@ -290,7 +294,7 @@ class AkshareSource(BaseDataSource):
                             bj_amount = round(bj_vol_daily * sh_amount_yi * 1e8 / sh_vol_daily / 1e8, 0)
                             result['bj_volume'] = int(bj_amount)
             except Exception as e:
-                print(f'[AkshareSource] 北交所成交额计算失败: {e}')
+                logger.warning(f'[AkshareSource] 北交所成交额计算失败: {e}')
 
         # 沪深京三市总成交额
         bj_vol = result.get('bj_volume', 0) or 0
@@ -361,7 +365,7 @@ class AkshareSource(BaseDataSource):
                             # 综合量能趋势分
                             vol_trend_score = round((day_score + avg_score) / 2, 1)
                     except Exception as e:
-                        print(f'[AkshareSource] 计算量能趋势失败: {e}')
+                        logger.warning(f'[AkshareSource] 计算量能趋势失败: {e}')
 
                     result['vol_trend_score'] = vol_trend_score
                     result['prev_volume'] = float(prev_volume)
@@ -374,7 +378,7 @@ class AkshareSource(BaseDataSource):
                     result['sentiment_score'] = round(sentiment_score, 1)
                     result['sh_score'] = round(up_ratio * 100, 1)
         except Exception as e:
-            print(f'[AkshareSource] stock_market_activity_legu 失败: {e}')
+            logger.warning(f'[AkshareSource] stock_market_activity_legu 失败: {e}')
 
         # 3. 深证指数走势（用新浪数据兜底，如果新浪失败则用日线）
         if 'sz_change' not in result:
@@ -389,7 +393,7 @@ class AkshareSource(BaseDataSource):
                     if prev_close > 0:
                         result['sz_change'] = round((curr_close - prev_close) / prev_close * 100, 2)
             except Exception as e:
-                print(f'[AkshareSource] 获取深证指数日线失败: {e}')
+                logger.warning(f'[AkshareSource] 获取深证指数日线失败: {e}')
 
         # 构造标准化返回
         standard_keys = [
@@ -481,7 +485,7 @@ class AkshareSource(BaseDataSource):
             result['total_count'] = len(sectors)
 
         except Exception as e:
-            print(f'[AkshareSource] 获取行业板块资金流向失败: {e}')
+            logger.warning(f'[AkshareSource] 获取行业板块资金流向失败: {e}')
             return {}
 
         if not result.get('sectors'):

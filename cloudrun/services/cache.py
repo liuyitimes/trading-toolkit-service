@@ -2,10 +2,13 @@
 """分级缓存系统 — 根据数据类型和交易时段动态调整 TTL"""
 
 import json
+import logging
 import os
 import threading
 import time
 from datetime import datetime, time as dt_time
+
+logger = logging.getLogger('trading_toolkit')
 
 # TTL 配置（秒）
 CACHE_TTL_CONFIG = {
@@ -325,7 +328,7 @@ def _background_refresh_worker(cache_key: str, fetch_func, ttl: int, refresh_key
             next_refresh = time.time() + ttl * revalidate_ratio
             cache.set(refresh_key, str(next_refresh), ttl)
     except Exception as e:
-        print(f'[CacheSWR] 后台刷新失败 {cache_key}: {e}')
+        logger.warning(f'[CacheSWR] 后台刷新失败 {cache_key}: {e}')
 
 
 # ==================== 缓存预热 ====================
@@ -336,7 +339,7 @@ def warmup_cache(items: list):
     Args:
         items: [(data_type, method_name, factory), ...] 列表
     """
-    print('[CacheWarmup] 开始预热缓存...')
+    logger.info('[CacheWarmup] 开始预热缓存...')
 
     def _warmup_item(data_type, fetch_func):
         try:
@@ -346,20 +349,20 @@ def warmup_cache(items: list):
 
             # 已有缓存则跳过
             if cache.get(cache_key) is not None:
-                print(f'[CacheWarmup] {data_type}: 已有缓存，跳过')
+                logger.info(f'[CacheWarmup] {data_type}: 已有缓存，跳过')
                 return
 
-            print(f'[CacheWarmup] {data_type}: 开始加载...')
+            logger.info(f'[CacheWarmup] {data_type}: 开始加载...')
             start = time.time()
             data = fetch_func()
             if data is not None:
                 cache.set(cache_key, data, ttl)
                 elapsed = time.time() - start
-                print(f'[CacheWarmup] {data_type}: 加载完成，耗时 {elapsed:.1f}s')
+                logger.info(f'[CacheWarmup] {data_type}: 加载完成，耗时 {elapsed:.1f}s')
             else:
-                print(f'[CacheWarmup] {data_type}: 数据为空')
+                logger.info(f'[CacheWarmup] {data_type}: 数据为空')
         except Exception as e:
-            print(f'[CacheWarmup] {data_type}: 预热失败 - {e}')
+            logger.warning(f'[CacheWarmup] {data_type}: 预热失败 - {e}')
 
     threads = []
     for data_type, fetch_func in items:
@@ -371,4 +374,4 @@ def warmup_cache(items: list):
     for t in threads:
         t.join(timeout=120)
 
-    print('[CacheWarmup] 缓存预热完成')
+    logger.info('[CacheWarmup] 缓存预热完成')

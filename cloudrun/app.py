@@ -562,7 +562,7 @@ def compat_health():
 
 # ==================== 用户 API ====================
 
-from models.database import init_db, SessionLocal
+from models.database import init_db, get_db_session
 from models.user import UserFavorite, UserReminder, UserSetting
 from services.auth import code_to_openid, require_auth
 
@@ -583,15 +583,11 @@ def user_login():
         return api_error(*ErrorCode.DATA_SOURCE_ERROR, '获取 openid 失败')
 
     # 确保用户设置存在
-    db = SessionLocal()
-    try:
+    with get_db_session() as db:
         setting = db.query(UserSetting).filter(UserSetting.openid == openid).first()
         if not setting:
             setting = UserSetting(openid=openid)
             db.add(setting)
-            db.commit()
-    finally:
-        db.close()
 
     return api_response({'openid': openid})
 
@@ -603,8 +599,7 @@ def get_favorites(openid):
     """获取自选列表"""
     type_filter = request.args.get('type')
 
-    db = SessionLocal()
-    try:
+    with get_db_session() as db:
         query = db.query(UserFavorite).filter(UserFavorite.openid == openid)
         if type_filter:
             query = query.filter(UserFavorite.type == type_filter)
@@ -620,8 +615,6 @@ def get_favorites(openid):
                 'added_at': item.created_at.isoformat() if item.created_at else None
             } for item in items]
         })
-    finally:
-        db.close()
 
 
 @app.route('/api/v1/user/favorites', methods=['POST'])
@@ -633,8 +626,7 @@ def add_favorite(openid):
     if not data or not data.get('code') or not data.get('type'):
         return api_error(*ErrorCode.INVALID_PARAMS, '缺少 code 或 type 参数')
 
-    db = SessionLocal()
-    try:
+    with get_db_session() as db:
         existing = db.query(UserFavorite).filter(
             UserFavorite.openid == openid,
             UserFavorite.code == data['code'],
@@ -653,10 +645,7 @@ def add_favorite(openid):
             premium_rate=data.get('premium_rate')
         )
         db.add(fav)
-        db.commit()
         return api_response({'message': '添加成功', 'code': data['code']})
-    finally:
-        db.close()
 
 
 @app.route('/api/v1/user/favorites', methods=['DELETE'])
@@ -669,17 +658,13 @@ def delete_favorite(openid):
     if not code or not type_val:
         return api_error(*ErrorCode.INVALID_PARAMS, '缺少 code 或 type 参数')
 
-    db = SessionLocal()
-    try:
+    with get_db_session() as db:
         deleted = db.query(UserFavorite).filter(
             UserFavorite.openid == openid,
             UserFavorite.code == code,
             UserFavorite.type == type_val
         ).delete()
-        db.commit()
         return api_response({'message': '删除成功' if deleted else '未找到', 'deleted': deleted})
-    finally:
-        db.close()
 
 
 @app.route('/api/v1/user/reminders')
@@ -687,8 +672,7 @@ def delete_favorite(openid):
 @require_auth
 def get_reminders(openid):
     """获取提醒列表"""
-    db = SessionLocal()
-    try:
+    with get_db_session() as db:
         items = db.query(UserReminder).filter(UserReminder.openid == openid).all()
         return api_response({
             'total': len(items),
@@ -703,8 +687,6 @@ def get_reminders(openid):
                 'created_at': item.created_at.isoformat() if item.created_at else None
             } for item in items]
         })
-    finally:
-        db.close()
 
 
 @app.route('/api/v1/user/reminders', methods=['POST'])
@@ -716,8 +698,7 @@ def add_reminder(openid):
     if not data or not data.get('code') or not data.get('type') or not data.get('remind_type'):
         return api_error(*ErrorCode.INVALID_PARAMS, '缺少必要参数')
 
-    db = SessionLocal()
-    try:
+    with get_db_session() as db:
         existing = db.query(UserReminder).filter(
             UserReminder.openid == openid,
             UserReminder.code == data['code'],
@@ -738,10 +719,7 @@ def add_reminder(openid):
             enabled=data.get('enabled', True)
         )
         db.add(reminder)
-        db.commit()
         return api_response({'message': '提醒添加成功', 'id': reminder.id})
-    finally:
-        db.close()
 
 
 @app.route('/api/v1/user/reminders/<int:reminder_id>', methods=['PUT'])
@@ -750,8 +728,7 @@ def add_reminder(openid):
 def update_reminder(openid, reminder_id):
     """更新提醒"""
     data = request.json
-    db = SessionLocal()
-    try:
+    with get_db_session() as db:
         reminder = db.query(UserReminder).filter(
             UserReminder.id == reminder_id,
             UserReminder.openid == openid
@@ -763,10 +740,7 @@ def update_reminder(openid, reminder_id):
             reminder.enabled = data['enabled']
         if 'remind_value' in data:
             reminder.remind_value = data['remind_value']
-        db.commit()
         return api_response({'message': '更新成功'})
-    finally:
-        db.close()
 
 
 @app.route('/api/v1/user/reminders/<int:reminder_id>', methods=['DELETE'])
@@ -774,16 +748,12 @@ def update_reminder(openid, reminder_id):
 @require_auth
 def delete_reminder(openid, reminder_id):
     """删除提醒"""
-    db = SessionLocal()
-    try:
+    with get_db_session() as db:
         deleted = db.query(UserReminder).filter(
             UserReminder.id == reminder_id,
             UserReminder.openid == openid
         ).delete()
-        db.commit()
         return api_response({'message': '删除成功' if deleted else '未找到'})
-    finally:
-        db.close()
 
 
 @app.route('/api/v1/user/settings')
@@ -791,21 +761,17 @@ def delete_reminder(openid, reminder_id):
 @require_auth
 def get_settings(openid):
     """获取用户设置"""
-    db = SessionLocal()
-    try:
+    with get_db_session() as db:
         setting = db.query(UserSetting).filter(UserSetting.openid == openid).first()
         if not setting:
             setting = UserSetting(openid=openid)
             db.add(setting)
-            db.commit()
-            db.refresh(setting)
+            db.flush()
         return api_response({
             'theme': setting.theme,
             'default_tab': setting.default_tab,
             'remind_enabled': setting.remind_enabled
         })
-    finally:
-        db.close()
 
 
 @app.route('/api/v1/user/settings', methods=['PUT'])
@@ -814,8 +780,7 @@ def get_settings(openid):
 def update_settings(openid):
     """更新用户设置"""
     data = request.json
-    db = SessionLocal()
-    try:
+    with get_db_session() as db:
         setting = db.query(UserSetting).filter(UserSetting.openid == openid).first()
         if not setting:
             setting = UserSetting(openid=openid)
@@ -827,10 +792,7 @@ def update_settings(openid):
             setting.default_tab = data['default_tab']
         if 'remind_enabled' in data:
             setting.remind_enabled = data['remind_enabled']
-        db.commit()
         return api_response({'message': '设置更新成功'})
-    finally:
-        db.close()
 
 
 # ==================== 缓存预热 ====================

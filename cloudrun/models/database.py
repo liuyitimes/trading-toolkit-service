@@ -6,6 +6,8 @@ PostgreSQL 连接串格式: postgresql://用户名:密码@localhost:5432/trading
 """
 
 import os
+from contextlib import contextmanager
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
@@ -27,6 +29,21 @@ else:
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
+
+@contextmanager
+def get_db_session():
+    """数据库会话上下文管理器，确保异常时自动回滚、正常时自动关闭"""
+    db = SessionLocal()
+    try:
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 def get_db():
     """获取数据库会话（用于依赖注入）"""
     db = SessionLocal()
@@ -34,6 +51,7 @@ def get_db():
         yield db
     finally:
         db.close()
+
 
 def init_db():
     """初始化数据库（创建所有表）"""

@@ -1,5 +1,11 @@
+import logging
+
 import akshare as ak
 import pandas as pd
+
+from utils.convert import safe_float
+
+logger = logging.getLogger('trading_toolkit')
 
 
 def get_exchange_by_code(code):
@@ -14,16 +20,6 @@ def get_exchange_by_code(code):
     return ''
 
 
-def safe_float(val, default=0):
-    """安全转换为float"""
-    try:
-        if pd.isna(val):
-            return default
-        return float(val)
-    except:
-        return default
-
-
 def _get_sina_bonds():
     """从新浪源获取实时可转债行情（320+条）"""
     try:
@@ -32,7 +28,7 @@ def _get_sina_bonds():
             return None
         return df
     except Exception as e:
-        print(f'获取新浪可转债数据失败: {e}')
+        logger.warning(f'获取新浪可转债数据失败: {e}')
         return None
 
 
@@ -44,7 +40,7 @@ def _get_em_bonds():
             return None
         return df
     except Exception as e:
-        print(f'获取东方财富可转债数据失败: {e}')
+        logger.warning(f'获取东方财富可转债数据失败: {e}')
         return None
 
 
@@ -175,7 +171,7 @@ def get_market_temperature():
             'ticktime': str(df['ticktime'].iloc[0]) if 'ticktime' in df.columns else '',
         }
     except Exception as e:
-        print(f'获取可转债市场温度失败: {e}')
+        logger.warning(f'获取可转债市场温度失败: {e}')
         return None
 
 
@@ -208,7 +204,7 @@ def get_convertible_bond_list():
             })
         return result
     except Exception as e:
-        print(f'获取可转债列表失败: {e}')
+        logger.warning(f'获取可转债列表失败: {e}')
         return []
 
 
@@ -245,7 +241,7 @@ def get_convertible_bond_detail(code: str) -> dict:
 
         return result
     except Exception as e:
-        print(f'获取可转债详情失败: {e}')
+        logger.warning(f'获取可转债详情失败: {e}')
         return {}
 
 
@@ -300,7 +296,7 @@ def get_convertible_bond_signals():
             'down_revised': df_to_records(down_revised),
         }
     except Exception as e:
-        print(f'获取可转债信号失败: {e}')
+        logger.warning(f'获取可转债信号失败: {e}')
         return None
 
 
@@ -319,7 +315,7 @@ def get_pending_bonds():
         if rows:
             return rows
     except Exception as e:
-        print(f'获取待发可转债失败: {e}')
+        logger.warning(f'获取待发可转债失败: {e}')
     return []
 
 
@@ -348,7 +344,7 @@ def _fetch_jisilu_pre_list():
             if rows:
                 return _normalize_jisilu_pre_list(rows)
     except Exception as e:
-        print(f'集思录API请求失败: {e}')
+        logger.warning(f'集思录API请求失败: {e}')
     return []
 
 
@@ -365,6 +361,25 @@ def _calc_strategy_score(stock_cash_ratio, safety_pad, issue_size):
     else:
         size_score = (10 - issue_size) / 8 * 20
     return round(cash_score + safety_score + size_score)
+
+
+def _calc_placement_score(issue_size, float_shares, safety_pad):
+    """配售三因子评分 0-100
+    权重：发行规模30% + 流通盘40% + 安全垫30%
+    """
+    size_score = max(0, 1 - issue_size / 10) * 30
+    float_score = (1 - float_shares / issue_size) * 40 if issue_size > 0 else 0
+    safety_score = min(safety_pad / 10, 1) * 30
+    return round(size_score + float_score + safety_score)
+
+
+def _get_rating_by_score(score):
+    """根据评分映射评级"""
+    if score >= 70:
+        return 'recommend'
+    if score >= 40:
+        return 'watch'
+    return 'caution'
 
 
 def _get_risk_level(safety_pad):
@@ -424,7 +439,15 @@ def _normalize_jisilu_pre_list(rows):
             stock_trend = round((stock_price - ma20_price) / ma20_price * 100, 2)
 
         issue_size = safe_float(cell.get('amount', 0))
-        strategy_score = _calc_strategy_score(stock_cash_ratio, safety_pad, issue_size)
+        # 流通盘计算（设计稿 2026-07-02-placement-rating-design.md）
+        online_amount = safe_float(cell.get('online_amount', 0))
+        ration_rt = safe_float(cell.get('ration_rt', 0))
+        if online_amount > 0:
+            float_shares = online_amount
+        else:
+            float_shares = issue_size * (1 - ration_rt / 100) if ration_rt > 0 else issue_size
+        strategy_score = _calc_placement_score(issue_size, float_shares, safety_pad)
+        strategy_rating = _get_rating_by_score(strategy_score)
         risk_level = _get_risk_level(safety_pad)
 
         result.append({
@@ -461,6 +484,8 @@ def _normalize_jisilu_pre_list(rows):
             'safety_pad': safety_pad,
             'stock_trend': stock_trend,
             'strategy_score': strategy_score,
+            'float_shares': round(float_shares, 2),
+            'strategy_rating': strategy_rating,
             'risk_level': risk_level,
         })
     return result

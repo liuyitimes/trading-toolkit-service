@@ -1,5 +1,11 @@
+import logging
+
 import akshare as ak
 import pandas as pd
+
+from utils.convert import safe_float
+
+logger = logging.getLogger('trading_toolkit')
 
 
 def get_hk_ipo_list():
@@ -35,7 +41,7 @@ def get_hk_ipo_list():
             })
         return result
     except Exception as e:
-        print(f'获取港股IPO列表失败: {e}')
+        logger.warning(f'获取港股IPO列表失败: {e}')
         return []
 
 
@@ -68,7 +74,7 @@ def get_hk_ipo_upcoming():
             })
         return result
     except Exception as e:
-        print(f'获取即将上市港股IPO失败: {e}')
+        logger.warning(f'获取即将上市港股IPO失败: {e}')
         return []
 
 
@@ -88,5 +94,5 @@ def get_hk_ipo_summary():
             'total': int(df.shape[0]),
         }
     except Exception as e:
-        print(f'获取港股打新概览失败: {e}')
+        logger.warning(f'获取港股打新概览失败: {e}')
         return {'error': str(e)}

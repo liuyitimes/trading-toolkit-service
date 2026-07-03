@@ -5,11 +5,15 @@ efinance 是轻量级 Python 金融数据接口库，封装了东方财富的数
 import 统一放在方法内部 try/except 中，避免 efinance 未安装时导致整个模块加载失败。
 """
 
+import logging
+
 from services.base import BaseDataSource
 from services.normalizer import (
     normalize_convertible_list,
     normalize_lof_list,
 )
+
+logger = logging.getLogger('trading_toolkit')
 
 
 def _apply_convertible_filters(items: list, **kwargs) -> dict:
@@ -136,7 +140,7 @@ class EfinanceSource(BaseDataSource):
             normalized = normalize_convertible_list(rows)
             return _apply_convertible_filters(normalized, **kwargs)
         except Exception as e:
-            print(f'[EfinanceSource] get_convertible_list 失败: {e}')
+            logger.warning(f'[EfinanceSource] get_convertible_list 失败: {e}')
             return {'total': 0, 'page': 1, 'page_size': 100, 'items': []}
 
     def get_convertible_signals(self) -> dict:
@@ -178,7 +182,7 @@ class EfinanceSource(BaseDataSource):
                 'down_revised': down_revised,
             }
         except Exception as e:
-            print(f'[EfinanceSource] get_convertible_signals 失败: {e}')
+            logger.warning(f'[EfinanceSource] get_convertible_signals 失败: {e}')
             return {'double_low': [], 'force_redeem': [], 'discount': [], 'down_revised': []}
 
     def get_convertible_detail(self, code: str) -> dict:
@@ -238,7 +242,7 @@ class EfinanceSource(BaseDataSource):
 
             return {}
         except Exception as e:
-            print(f'[EfinanceSource] get_convertible_detail 失败: {e}')
+            logger.warning(f'[EfinanceSource] get_convertible_detail 失败: {e}')
             return {}
 
     def get_convertible_pending(self) -> list:
@@ -290,7 +294,7 @@ class EfinanceSource(BaseDataSource):
                 'sz_flow': 0,
             }
         except Exception as e:
-            print(f'[EfinanceSource] get_convertible_temperature 失败: {e}')
+            logger.warning(f'[EfinanceSource] get_convertible_temperature 失败: {e}')
             return {}
 
     # ---- LOF ----
@@ -309,7 +313,7 @@ class EfinanceSource(BaseDataSource):
 
             return normalize_lof_list(rows)
         except Exception as e:
-            print(f'[EfinanceSource] get_lof_list 失败: {e}')
+            logger.warning(f'[EfinanceSource] get_lof_list 失败: {e}')
             return []
 
     def get_lof_opportunities(self) -> dict:
@@ -335,7 +339,7 @@ class EfinanceSource(BaseDataSource):
                 'discount': discount,
             }
         except Exception as e:
-            print(f'[EfinanceSource] get_lof_opportunities 失败: {e}')
+            logger.warning(f'[EfinanceSource] get_lof_opportunities 失败: {e}')
             return {'premium': [], 'discount': []}
 
     def get_lof_summary(self) -> dict:
@@ -363,7 +367,7 @@ class EfinanceSource(BaseDataSource):
                 'paused_count': sum(1 for item in normalized if item.get('limit_status') == '暂停'),
             }
         except Exception as e:
-            print(f'[EfinanceSource] get_lof_summary 失败: {e}')
+            logger.warning(f'[EfinanceSource] get_lof_summary 失败: {e}')
             return {}
 
     # ---- 港股 IPO ----
@@ -380,7 +384,7 @@ class EfinanceSource(BaseDataSource):
             rows = df.to_dict('records')
             return rows
         except Exception as e:
-            print(f'[EfinanceSource] get_hk_ipo_list 失败: {e}')
+            logger.warning(f'[EfinanceSource] get_hk_ipo_list 失败: {e}')
             return []
 
     def get_hk_ipo_upcoming(self) -> list:
@@ -396,7 +400,7 @@ class EfinanceSource(BaseDataSource):
             upcoming = [item for item in rows if '待上市' in str(item.get('上市日期', item.get('status', '')))]
             return upcoming if upcoming else rows
         except Exception as e:
-            print(f'[EfinanceSource] get_hk_ipo_upcoming 失败: {e}')
+            logger.warning(f'[EfinanceSource] get_hk_ipo_upcoming 失败: {e}')
             return []
 
     def get_hk_ipo_summary(self) -> dict:
@@ -414,7 +418,7 @@ class EfinanceSource(BaseDataSource):
                 'avg_return': 0,
             }
         except Exception as e:
-            print(f'[EfinanceSource] get_hk_ipo_summary 失败: {e}')
+            logger.warning(f'[EfinanceSource] get_hk_ipo_summary 失败: {e}')
             return {}
 
     # ---- 市场情绪 ----

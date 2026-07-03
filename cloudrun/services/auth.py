@@ -45,13 +45,12 @@ def code_to_openid(code: str) -> str:
 
 
 def require_auth(f):
-    """鉴权装饰器：要求请求携带 openid"""
+    """鉴权装饰器：要求请求在 X-Openid 头中携带 openid"""
     @wraps(f)
     def decorated(*args, **kwargs):
-        openid = request.headers.get('X-Openid') or request.args.get('openid')
+        openid = request.headers.get('X-Openid')
         if not openid:
-            return api_error('UNAUTHORIZED', '缺少 openid', 401)
-        # 将 openid 注入到 kwargs 中
+            return api_error('UNAUTHORIZED', '缺少 X-Openid 头', 401)
         kwargs['openid'] = openid
         return f(*args, **kwargs)
     return decorated
