@@ -1,0 +1,97 @@
+<view class="container {{isDarkMode ? 'dark-mode' : ''}}">
+  <!-- 搜索栏 -->
+  <view class="search-bar" wx:if="{{!loading}}">
+    <view class="search-box" wx:if="{{showSearch}}">
+      <input class="search-input" placeholder="搜索新股名称/代码" value="{{searchKeyword}}" bindinput="onSearchInput" focus="{{showSearch}}" />
+      <text class="search-cancel" bindtap="toggleSearch">取消</text>
+    </view>
+    <view class="search-header" wx:else>
+      <text class="page-title">港股打新</text>
+      <view class="header-actions">
+        <text class="search-btn" bindtap="toggleSearch">🔍</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="tabs" wx:if="{{!loading && !showSearch}}">
+    <view class="tab {{currentTab === 'all' ? 'active' : ''}}" bindtap="switchTab" data-tab="all">全部IPO</view>
+    <view class="tab {{currentTab === 'upcoming' ? 'active' : ''}}" bindtap="switchTab" data-tab="upcoming">即将上市</view>
+  </view>
+
+  <view class="loading-overlay" wx:if="{{loading}}">
+    <view class="loading-content">
+      <view class="loading-spinner"></view>
+      <text class="loading-text">加载中...</text>
+    </view>
+  </view>
+
+  <view class="content" wx:if="{{!loading}}">
+    <view class="ipo-list" wx:if="{{showSearch && filteredList.length > 0}}">
+      <view class="ipo-item" wx:for="{{filteredList}}" wx:key="index">
+        <view class="ipo-header">
+          <view class="ipo-title">
+            <text class="exchange-icon hk">港</text>
+            <text class="ipo-name">{{item.name}}</text>
+            <text class="ipo-code">{{item.code}}</text>
+            <text class="fav-icon {{item.isFavorite ? 'active' : ''}}" catchtap="toggleFavorite" data-code="{{item.code}}" data-index="{{index}}">{{item.isFavorite ? '★' : '☆'}}</text>
+          </view>
+          <view class="ipo-status {{item.status === '已上市' ? 'listed' : 'subscribing'}}">
+            {{item.status}}
+          </view>
+        </view>
+        <view class="ipo-body">
+          <view class="ipo-col">
+            <text class="ipo-label">发行价</text>
+            <text class="ipo-value">{{item.ipo_price}} HKD</text>
+          </view>
+          <view class="ipo-col">
+            <text class="ipo-label">{{item.list_date ? '上市日期' : '每手股数'}}</text>
+            <text class="ipo-value">{{item.list_date || item.lot_size}}</text>
+          </view>
+          <view class="ipo-col" wx:if="{{item.showChange}}">
+            <text class="ipo-label">涨跌幅</text>
+            <text class="ipo-value {{item.isUp ? 'up' : 'down'}}">{{item.change_pct}}</text>
+          </view>
+        </view>
+      </view>
+    </view>
+    <view class="ipo-list" wx:if="{{!showSearch && currentList.length > 0}}">
+      <view class="ipo-item" wx:for="{{currentList}}" wx:key="index">
+        <view class="ipo-header">
+          <view class="ipo-title">
+            <text class="exchange-icon hk">港</text>
+            <text class="ipo-name">{{item.name}}</text>
+            <text class="ipo-code">{{item.code}}</text>
+            <text class="fav-icon {{item.isFavorite ? 'active' : ''}}" catchtap="toggleFavorite" data-code="{{item.code}}" data-index="{{index}}">{{item.isFavorite ? '★' : '☆'}}</text>
+          </view>
+          <view class="ipo-status {{item.status === '已上市' ? 'listed' : 'subscribing'}}">
+            {{item.status}}
+          </view>
+        </view>
+        <view class="ipo-body">
+          <view class="ipo-col">
+            <text class="ipo-label">发行价</text>
+            <text class="ipo-value">{{item.ipo_price}} HKD</text>
+          </view>
+          <view class="ipo-col">
+            <text class="ipo-label">{{item.list_date ? '上市日期' : '每手股数'}}</text>
+            <text class="ipo-value">{{item.list_date || item.lot_size}}</text>
+          </view>
+          <view class="ipo-col" wx:if="{{item.showChange}}">
+            <text class="ipo-label">涨跌幅</text>
+            <text class="ipo-value {{item.isUp ? 'up' : 'down'}}">{{item.change_pct}}</text>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <view class="empty" wx:if="{{showSearch && filteredList.length === 0}}">
+      <text class="empty-icon">📭</text>
+      <text class="empty-text">未找到匹配的新股</text>
+    </view>
+    <view class="empty" wx:if="{{!showSearch && currentList.length === 0}}">
+      <text class="empty-icon">📭</text>
+      <text class="empty-text">暂无IPO数据</text>
+    </view>
+  </view>
+</view>

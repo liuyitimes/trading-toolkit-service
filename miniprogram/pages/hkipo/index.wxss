@@ -1,0 +1,438 @@
+/* ==================== 港股IPO页面样式 - GitHub风格 ==================== */
+.container {
+  min-height: 100vh;
+  background: #F6F8FA;
+  padding-bottom: 40rpx;
+}
+
+/* ==================== 搜索栏 ==================== */
+.search-bar {
+  background: #FFFFFF;
+  border-bottom: 1rpx solid #D0D7DE;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.search-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 24rpx 32rpx;
+}
+
+.page-title {
+  font-size: 34rpx;
+  font-weight: 700;
+  color: #1F2328;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 24rpx;
+}
+
+.search-btn {
+  font-size: 36rpx;
+}
+
+.search-box {
+  display: flex;
+  align-items: center;
+  padding: 16rpx 20rpx;
+  gap: 16rpx;
+}
+
+.search-input {
+  flex: 1;
+  height: 64rpx;
+  padding: 0 24rpx;
+  background: #F6F8FA;
+  border-radius: 8rpx;
+  font-size: 28rpx;
+  color: #1F2328;
+}
+
+.search-cancel {
+  font-size: 28rpx;
+  color: #0969DA;
+  padding: 0 8rpx;
+}
+
+.fav-icon {
+  font-size: 26rpx;
+  color: #D0D7DE;
+  margin-left: auto;
+  order: 2;
+  padding: 4rpx 8rpx;
+}
+
+.fav-icon.active {
+  color: #9A6700;
+}
+
+/* ==================== 标签页 ==================== */
+.tabs {
+  display: flex;
+  background: #FFFFFF;
+  border-bottom: 1rpx solid #D0D7DE;
+  padding: 0 20rpx;
+}
+
+.tab {
+  flex: 1;
+  text-align: center;
+  padding: 24rpx 0;
+  font-size: 28rpx;
+  color: #59636E;
+  border-bottom: 3rpx solid transparent;
+  transition: all 0.2s ease;
+  font-weight: 500;
+}
+
+.tab.active {
+  color: #1F2328;
+  font-weight: 600;
+  border-bottom-color: #FD8C73;
+}
+
+/* ==================== 内容区域 ==================== */
+.content {
+  padding: 20rpx;
+}
+
+/* ==================== IPO列表 ==================== */
+.ipo-list {
+  background: #FFFFFF;
+  border: 1rpx solid #D0D7DE;
+  border-radius: 12rpx;
+  overflow: hidden;
+  box-shadow: 0 1px 0 rgba(31, 35, 40, 0.04);
+}
+
+.ipo-item {
+  padding: 24rpx;
+  border-bottom: 1rpx solid #D0D7DE;
+}
+
+.ipo-item:last-child {
+  border-bottom: none;
+}
+
+.ipo-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 20rpx;
+}
+
+.ipo-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  flex: 1;
+  gap: 10rpx;
+}
+
+.exchange-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30rpx;
+  height: 30rpx;
+  border-radius: 4rpx;
+  font-size: 18rpx;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.exchange-icon.hk {
+  background: #0969DA;
+}
+
+.ipo-name {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #1F2328;
+}
+
+.ipo-code {
+  font-size: 24rpx;
+  color: #818B98;
+  width: 100%;
+  order: 3;
+}
+
+/* ==================== 状态标签 ==================== */
+.ipo-status {
+  font-size: 22rpx;
+  padding: 6rpx 16rpx;
+  border-radius: 20rpx;
+  font-weight: 500;
+}
+
+.ipo-status.listed {
+  background: #DAFBE1;
+  color: #1A7F37;
+  border: 1rpx solid #4AC26B;
+}
+
+.ipo-status.subscribing {
+  background: #FFEBE9;
+  color: #CF222E;
+  border: 1rpx solid #FFCECB;
+}
+
+/* ==================== IPO详情 ==================== */
+.ipo-body {
+  display: flex;
+  justify-content: flex-start;
+  gap: 48rpx;
+}
+
+.ipo-col {
+  display: flex;
+  flex-direction: column;
+}
+
+.ipo-label {
+  font-size: 22rpx;
+  color: #818B98;
+  margin-bottom: 6rpx;
+}
+
+.ipo-value {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #1F2328;
+}
+
+.ipo-value.up {
+  color: #1A7F37;
+}
+
+.ipo-value.down {
+  color: #CF222E;
+}
+
+/* ==================== 空状态 ==================== */
+.empty {
+  text-align: center;
+  padding: 120rpx 40rpx;
+}
+
+.empty-icon {
+  font-size: 100rpx;
+  margin-bottom: 24rpx;
+  opacity: 0.4;
+}
+
+.empty-text {
+  font-size: 28rpx;
+  color: #818B98;
+}
+
+/* ==================== 加载状态 ==================== */
+.loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #F6F8FA;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+}
+
+.loading-content {
+  text-align: center;
+}
+
+.loading-spinner {
+  width: 48rpx;
+  height: 48rpx;
+  border: 3rpx solid #D0D7DE;
+  border-top-color: #0969DA;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  margin: 0 auto 16rpx;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.loading-text {
+  font-size: 28rpx;
+  color: #59636E;
+}
+
+/* ==================== 错误状态 ==================== */
+.error-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #F6F8FA;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+  padding: 40rpx;
+}
+
+.error-content {
+  text-align: center;
+  max-width: 500rpx;
+}
+
+.error-icon {
+  font-size: 80rpx;
+  margin-bottom: 24rpx;
+  display: block;
+}
+
+.error-message {
+  font-size: 30rpx;
+  color: #59636E;
+  margin-bottom: 32rpx;
+  display: block;
+  line-height: 1.6;
+}
+
+.error-btn {
+  background: #2DA44E;
+  color: #fff;
+  border: 1rpx solid rgba(31, 35, 40, 0.15);
+  border-radius: 8rpx;
+  padding: 20rpx 48rpx;
+  font-size: 28rpx;
+  font-weight: 500;
+}
+
+/* ==================== 暗夜模式覆盖 ==================== */
+.dark-mode .container {
+  background: #0D1117;
+}
+
+.dark-mode .search-bar {
+  background: #161B22;
+  border-color: #30363D;
+}
+
+.dark-mode .page-title {
+  color: #E6EDF3;
+}
+
+.dark-mode .search-input {
+  background: #0D1117;
+  color: #E6EDF3;
+}
+
+.dark-mode .search-cancel {
+  color: #58A6FF;
+}
+
+.dark-mode .fav-icon {
+  color: #30363D;
+}
+
+.dark-mode .fav-icon.active {
+  color: #D29922;
+}
+
+.dark-mode .tabs {
+  background: #161B22;
+  border-color: #30363D;
+}
+
+.dark-mode .tab {
+  color: #8B949E;
+}
+
+.dark-mode .tab.active {
+  color: #E6EDF3;
+}
+
+.dark-mode .ipo-list {
+  background: #161B22;
+  border-color: #30363D;
+}
+
+.dark-mode .ipo-item {
+  border-color: #21262D;
+}
+
+.dark-mode .ipo-name {
+  color: #E6EDF3;
+}
+
+.dark-mode .ipo-code {
+  color: #6E7681;
+}
+
+.dark-mode .ipo-status.listed {
+  background: #1A4D2E;
+  color: #3FB950;
+  border-color: #238636;
+}
+
+.dark-mode .ipo-status.subscribing {
+  background: #4D1F1F;
+  color: #F85149;
+  border-color: #DA3633;
+}
+
+.dark-mode .ipo-label {
+  color: #6E7681;
+}
+
+.dark-mode .ipo-value {
+  color: #E6EDF3;
+}
+
+.dark-mode .ipo-value.up {
+  color: #3FB950;
+}
+
+.dark-mode .ipo-value.down {
+  color: #F85149;
+}
+
+.dark-mode .empty {
+  background: #0D1117;
+}
+
+.dark-mode .empty-icon {
+  opacity: 0.3;
+}
+
+.dark-mode .empty-text {
+  color: #6E7681;
+}
+
+.dark-mode .loading-overlay {
+  background: #0D1117;
+}
+
+.dark-mode .loading-spinner {
+  border-color: #30363D;
+  border-top-color: #58A6FF;
+}
+
+.dark-mode .loading-text {
+  color: #8B949E;
+}
+
+.dark-mode .error-overlay {
+  background: #0D1117;
+}
+
+.dark-mode .error-message {
+  color: #8B949E;
+}

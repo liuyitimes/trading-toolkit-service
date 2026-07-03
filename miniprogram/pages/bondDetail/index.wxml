@@ -1,0 +1,148 @@
+<view class="container">
+  <view class="loading-overlay" wx:if="{{loading}}">
+    <view class="loading-content">
+      <view class="loading-spinner"></view>
+      <text class="loading-text">加载中...</text>
+    </view>
+  </view>
+
+  <view wx:if="{{!loading && bondInfo}}" class="detail-content">
+    <view class="header-card">
+      <view class="header-top">
+        <view class="title-row">
+          <text class="exchange-icon sh" wx:if="{{bondInfo.exchange === '沪'}}">沪</text>
+          <text class="exchange-icon sz" wx:elif="{{bondInfo.exchange === '深'}}">深</text>
+          <text class="exchange-icon bj" wx:elif="{{bondInfo.exchange === '京'}}">京</text>
+          <text class="exchange-icon hk" wx:elif="{{bondInfo.exchange === '港'}}">港</text>
+          <text class="bond-name">{{bondInfo.bondName}}</text>
+        </view>
+        <view class="favorite-btn {{isFavorite ? 'active' : ''}}" bindtap="toggleFavorite">
+          <text class="fav-icon">{{isFavorite ? '★' : '☆'}}</text>
+        </view>
+      </view>
+      <view class="price-row">
+        <text class="price-value">{{bondInfo.price}}</text>
+        <view class="stock-row" bindtap="goToStock">
+          <text class="stock-name">{{bondInfo.stockName}}</text>
+          <text class="stock-arrow">›</text>
+        </view>
+      </view>
+      <view class="metrics-row">
+        <view class="metric-item">
+          <text class="metric-label">转股价值</text>
+          <text class="metric-value">{{bondInfo.conversionValue}}</text>
+        </view>
+        <view class="metric-item">
+          <text class="metric-label">转股溢价率</text>
+          <text class="metric-value {{bondInfo.premiumClass}}">{{bondInfo.premiumRate}}</text>
+        </view>
+        <view class="metric-item">
+          <text class="metric-label">双低</text>
+          <text class="metric-value highlight">{{bondInfo.doubleLow}}</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="section">
+      <text class="section-title">基本信息</text>
+      <view class="info-grid">
+        <view class="info-item">
+          <text class="info-label">转债代码</text>
+          <text class="info-value copyable" bindtap="copyCode">{{bondInfo.bondCode}}</text>
+        </view>
+        <view class="info-item">
+          <text class="info-label">正股代码</text>
+          <text class="info-value">{{bondInfo.stockCode}}</text>
+        </view>
+        <view class="info-item">
+          <text class="info-label">转股价</text>
+          <text class="info-value">{{bondInfo.conversionPrice}}</text>
+        </view>
+        <view class="info-item">
+          <text class="info-label">转股比例</text>
+          <text class="info-value">{{bondInfo.conversionRatio}}</text>
+        </view>
+        <view class="info-item">
+          <text class="info-label">发行规模</text>
+          <text class="info-value">{{bondInfo.issueSize}}</text>
+        </view>
+        <view class="info-item">
+          <text class="info-label">剩余规模</text>
+          <text class="info-value">{{bondInfo.remainingSize}}</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="section">
+      <text class="section-title">期限与利率</text>
+      <view class="info-grid">
+        <view class="info-item">
+          <text class="info-label">上市日期</text>
+          <text class="info-value">{{bondInfo.listingDate}}</text>
+        </view>
+        <view class="info-item">
+          <text class="info-label">到期日期</text>
+          <text class="info-value">{{bondInfo.maturityDate}}</text>
+        </view>
+        <view class="info-item">
+          <text class="info-label">剩余年限</text>
+          <text class="info-value">{{bondInfo.remainingYears}}</text>
+        </view>
+        <view class="info-item">
+          <text class="info-label">到期收益率</text>
+          <text class="info-value">{{bondInfo.ytm}}</text>
+        </view>
+      </view>
+      <view class="coupon-item">
+        <text class="info-label">票面利率</text>
+        <text class="info-value coupon">{{bondInfo.couponRate}}</text>
+      </view>
+    </view>
+
+    <view class="section">
+      <text class="section-title">特殊条款</text>
+      <view class="info-grid">
+        <view class="info-item">
+          <text class="info-label">回售价</text>
+          <text class="info-value">{{bondInfo.putPrice}}</text>
+        </view>
+        <view class="info-item">
+          <text class="info-label">强赎价</text>
+          <text class="info-value">{{bondInfo.callPrice}}</text>
+        </view>
+        <view class="info-item">
+          <text class="info-label">下修触发价</text>
+          <text class="info-value">{{bondInfo.downRevisePrice}}</text>
+        </view>
+        <view class="info-item">
+          <text class="info-label">纯债价值</text>
+          <text class="info-value">{{bondInfo.pureBondValue}}</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="section">
+      <text class="section-title">发行信息</text>
+      <view class="info-grid">
+        <view class="info-item full">
+          <text class="info-label">发行人</text>
+          <text class="info-value">{{bondInfo.issuer}}</text>
+        </view>
+        <view class="info-item">
+          <text class="info-label">所属行业</text>
+          <text class="info-value">{{bondInfo.industry}}</text>
+        </view>
+        <view class="info-item">
+          <text class="info-label">信用评级</text>
+          <text class="info-value">{{bondInfo.creditRating}}</text>
+        </view>
+        <view class="info-item full">
+          <text class="info-label">担保方式</text>
+          <text class="info-value">{{bondInfo.guarantee}}</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="bottom-space"></view>
+  </view>
+</view>

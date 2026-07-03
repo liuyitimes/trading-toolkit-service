@@ -1,0 +1,218 @@
+<view class="container {{isDarkMode ? 'dark-mode' : ''}}">
+  <!-- 搜索栏 -->
+  <view class="search-bar" wx:if="{{!loading}}">
+    <view class="search-box" wx:if="{{showSearch}}">
+      <input class="search-input" placeholder="搜索转债名称/代码/正股" value="{{searchKeyword}}" bindinput="onSearchInput" focus="{{showSearch}}" />
+      <text class="search-cancel" bindtap="toggleSearch">取消</text>
+    </view>
+    <view class="search-header" wx:else>
+      <text class="page-title">可转债监控</text>
+      <view class="header-actions">
+        <text class="search-btn" bindtap="toggleSearch">🔍</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 市场温度概览 -->
+  <view class="market-overview" wx:if="{{!loading && !showSearch}}">
+    <view class="overview-header">
+      <text class="overview-title">市场温度</text>
+      <view class="market-status-tag">{{marketTemp.marketStatus}}</view>
+    </view>
+    <view class="overview-grid">
+      <view class="overview-item">
+        <text class="overview-value">{{marketTemp.count}}</text>
+        <text class="overview-label">在市转债</text>
+      </view>
+      <view class="overview-item">
+        <text class="overview-value">{{marketTemp.priceMedian}}</text>
+        <text class="overview-label">价格中位数</text>
+      </view>
+      <view class="overview-item">
+        <text class="overview-value">{{marketTemp.premiumMedian}}{{marketTemp.premiumMedian !== '--' ? '%' : ''}}</text>
+        <text class="overview-label">溢价中位数</text>
+      </view>
+      <view class="overview-item">
+        <text class="overview-value">{{marketTemp.doubleLowMedian}}</text>
+        <text class="overview-label">双低中位数</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 信号统计 -->
+  <view class="signal-stats" wx:if="{{!loading && !showSearch}}">
+    <view class="stat-item {{currentTab === 'placement' ? 'active' : ''}}" bindtap="switchTab" data-tab="placement">
+      <text class="stat-value">{{marketTemp.placementCount}}</text>
+      <text class="stat-label">配售</text>
+    </view>
+    <view class="stat-item {{currentTab === 'double-low' ? 'active' : ''}}" bindtap="switchTab" data-tab="double-low">
+      <text class="stat-value">{{marketTemp.doubleLowCount}}</text>
+      <text class="stat-label">双低</text>
+    </view>
+    <view class="stat-item {{currentTab === 'force-redeem' ? 'active' : ''}}" bindtap="switchTab" data-tab="force-redeem">
+      <text class="stat-value">{{marketTemp.forceRedeemCount}}</text>
+      <text class="stat-label">强赎</text>
+    </view>
+    <view class="stat-item {{currentTab === 'discount' ? 'active' : ''}}" bindtap="switchTab" data-tab="discount">
+      <text class="stat-value">{{marketTemp.discountCount}}</text>
+      <text class="stat-label">折价</text>
+    </view>
+    <view class="stat-item {{currentTab === 'down-revised' ? 'active' : ''}}" bindtap="switchTab" data-tab="down-revised">
+      <text class="stat-value">{{marketTemp.downRevisedCount}}</text>
+      <text class="stat-label">下修</text>
+    </view>
+  </view>
+
+  <!-- 投资指引 -->
+  <view class="guide-section" wx:if="{{!loading && !showSearch}}">
+    <view class="guide-item" wx:if="{{currentTab === 'placement'}}">
+      <text class="guide-icon">🎯</text>
+      <text class="guide-text">抢权配售：提前买正股获配债权，百元含权越高越划算，安全垫越高越安全</text>
+    </view>
+    <view class="guide-item" wx:if="{{currentTab === 'double-low'}}">
+      <text class="guide-icon">✅</text>
+      <text class="guide-text">双低值越小投资价值越高，低于150可入场，低于170可关注</text>
+    </view>
+    <view class="guide-item" wx:if="{{currentTab === 'force-redeem'}}">
+      <text class="guide-icon">🔺</text>
+      <text class="guide-text">溢价率低于10%且价格105-140，接近强赎触发线，关注转股套利机会</text>
+    </view>
+    <view class="guide-item" wx:if="{{currentTab === 'discount'}}">
+      <text class="guide-icon">💰</text>
+      <text class="guide-text">溢价率为负说明转债比转股便宜，可研究转股套利空间</text>
+    </view>
+    <view class="guide-item" wx:if="{{currentTab === 'down-revised'}}">
+      <text class="guide-icon">🔻</text>
+      <text class="guide-text">高溢价+低价格+短剩余年限，公司下修转股价概率大</text>
+    </view>
+  </view>
+
+  <view class="loading-overlay" wx:if="{{loading}}">
+    <view class="loading-content">
+      <view class="loading-spinner"></view>
+      <text class="loading-text">加载中...</text>
+    </view>
+  </view>
+
+  <view class="content" wx:if="{{!loading}}">
+    <view class="table">
+      <view class="table-header" wx:if="{{!showSearch}}">
+        <text class="col-name">名称/代码</text>
+        <text class="col-price">价格/正股</text>
+        <text class="col-premium">溢价率</text>
+        <text class="col-extra placement-extra" wx:if="{{currentTab === 'placement'}}">配售</text>
+        <text class="col-extra" wx:if="{{currentTab === 'double-low'}}">双低</text>
+        <text class="col-extra" wx:if="{{currentTab === 'force-redeem'}}">距强赎</text>
+        <text class="col-extra" wx:if="{{currentTab === 'discount'}}">折价空间</text>
+        <text class="col-extra" wx:if="{{currentTab === 'down-revised'}}">距下修</text>
+      </view>
+
+      <view class="table-body">
+        <view class="table-row" wx:for="{{filteredList}}" wx:key="index" bindtap="goToDetail" data-code="{{item.bondCode}}" wx:if="{{showSearch}}">
+          <view class="col-name">
+            <view class="name-row">
+              <text class="exchange-icon sh" wx:if="{{item.exchange === '沪'}}">沪</text>
+              <text class="exchange-icon sz" wx:elif="{{item.exchange === '深'}}">深</text>
+              <text class="exchange-icon bj" wx:elif="{{item.exchange === '京'}}">京</text>
+              <text class="bond-name">{{item.bondName}}</text>
+              <text class="fav-icon {{item.isFavorite ? 'active' : ''}}" catchtap="toggleFavorite" data-code="{{item.bondCode}}" data-index="{{index}}">{{item.isFavorite ? '★' : '☆'}}</text>
+            </view>
+            <view class="code-row">
+              <text class="bond-code">{{item.bondCode}}</text>
+              <text class="stock-code">{{item.stockName}}</text>
+            </view>
+          </view>
+          <view class="col-price">
+            <text class="price-main">{{item.price}}</text>
+            <text class="price-sub">{{item.stockPrice}}</text>
+          </view>
+          <view class="col-premium">
+            <text class="premium-value {{item.premiumClass}}">{{item.premium}}</text>
+          </view>
+          <view class="col-extra placement-extra" wx:if="{{currentTab === 'placement'}}">
+            <view class="placement-row">
+              <text class="placement-label">含权</text>
+              <text class="placement-value highlight">{{item.hundredRight}}</text>
+            </view>
+            <view class="placement-row">
+              <text class="placement-label">一手</text>
+              <text class="placement-value">{{item.lotStock}}</text>
+            </view>
+            <view class="placement-row">
+              <text class="placement-label">安全垫</text>
+              <text class="placement-value {{item.safetyPadClass}}">{{item.safetyPad}}</text>
+            </view>
+          </view>
+          <view class="col-extra" wx:if="{{currentTab === 'double-low'}}">
+            <text class="extra-value highlight">{{item.doubleLow}}</text>
+          </view>
+          <view class="col-extra" wx:if="{{currentTab === 'force-redeem'}}">
+            <text class="extra-value {{item.forceRedemptionClass}}">{{item.forceRedemptionGap}}</text>
+          </view>
+          <view class="col-extra" wx:if="{{currentTab === 'discount'}}">
+            <text class="extra-value {{item.discountClass}}">{{item.discountSpace}}</text>
+          </view>
+          <view class="col-extra" wx:if="{{currentTab === 'down-revised'}}">
+            <text class="extra-value {{item.downReviseClass}}">{{item.downReviseGap}}</text>
+          </view>
+        </view>
+
+        <view class="table-row" wx:for="{{currentList}}" wx:key="index" bindtap="goToDetail" data-code="{{item.bondCode}}" wx:if="{{!showSearch}}">
+          <view class="col-name">
+            <view class="name-row">
+              <text class="exchange-icon sh" wx:if="{{item.exchange === '沪'}}">沪</text>
+              <text class="exchange-icon sz" wx:elif="{{item.exchange === '深'}}">深</text>
+              <text class="exchange-icon bj" wx:elif="{{item.exchange === '京'}}">京</text>
+              <text class="bond-name">{{item.bondName}}</text>
+              <text class="fav-icon {{item.isFavorite ? 'active' : ''}}" catchtap="toggleFavorite" data-code="{{item.bondCode}}" data-index="{{index}}">{{item.isFavorite ? '★' : '☆'}}</text>
+            </view>
+            <view class="code-row">
+              <text class="bond-code">{{item.bondCode}}</text>
+              <text class="stock-code">{{item.stockName}}</text>
+            </view>
+          </view>
+          <view class="col-price">
+            <text class="price-main">{{item.price}}</text>
+            <text class="price-sub">{{item.stockPrice}}</text>
+          </view>
+          <view class="col-premium">
+            <text class="premium-value {{item.premiumClass}}">{{item.premium}}</text>
+          </view>
+          <view class="col-extra placement-extra" wx:if="{{currentTab === 'placement'}}">
+            <view class="placement-row">
+              <text class="placement-label">含权</text>
+              <text class="placement-value highlight">{{item.hundredRight}}</text>
+            </view>
+            <view class="placement-row">
+              <text class="placement-label">一手</text>
+              <text class="placement-value">{{item.lotStock}}</text>
+            </view>
+            <view class="placement-row">
+              <text class="placement-label">安全垫</text>
+              <text class="placement-value {{item.safetyPadClass}}">{{item.safetyPad}}</text>
+            </view>
+          </view>
+          <view class="col-extra" wx:if="{{currentTab === 'double-low'}}">
+            <text class="extra-value highlight">{{item.doubleLow}}</text>
+          </view>
+          <view class="col-extra" wx:if="{{currentTab === 'force-redeem'}}">
+            <text class="extra-value {{item.forceRedemptionClass}}">{{item.forceRedemptionGap}}</text>
+          </view>
+          <view class="col-extra" wx:if="{{currentTab === 'discount'}}">
+            <text class="extra-value {{item.discountClass}}">{{item.discountSpace}}</text>
+          </view>
+          <view class="col-extra" wx:if="{{currentTab === 'down-revised'}}">
+            <text class="extra-value {{item.downReviseClass}}">{{item.downReviseGap}}</text>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <view class="empty" wx:if="{{showSearch && filteredList.length === 0}}">
+      <text class="empty-text">未找到匹配的转债</text>
+    </view>
+    <view class="empty" wx:if="{{!showSearch && currentList.length === 0}}">
+      <text class="empty-text">暂无符合条件的标的</text>
+    </view>
+  </view>
+</view>
