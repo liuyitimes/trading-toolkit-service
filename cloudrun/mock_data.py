@@ -43,6 +43,12 @@ HK_IPO_LIST = [
 
 # 市场情绪数据（模拟）
 MARKET_SENTIMENT = {
+    "sentiment_score": 56,
+    "vol_trend_score": 58,
+    "prev_volume": 72,
+    "volume_change_pct": -3.2,
+    "volume_5d_avg": 68,
+    "volume_5d_change_pct": 2.1,
     "sh_score": 58,
     "sz_score": 52,
     "sh_change": 2.3,

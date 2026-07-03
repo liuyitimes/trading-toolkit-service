@@ -38,9 +38,9 @@
           <text>{{sentimentText}}</text>
         </view>
       </view>
-      <view class="sentiment-body" bindtap="openSentimentModal">
+      <view class="sentiment-body">
         <!-- 左侧：圆形仪表 -->
-        <view class="sentiment-gauge-wrap">
+        <view class="sentiment-gauge-wrap" bindtap="openFormulaModal">
           <view class="sentiment-gauge">
             <view class="gauge-bg"></view>
             <view class="gauge-fill {{sentimentLevel}}" style="--deg: {{mergedSentimentPercent * 1.8}}deg;"></view>
@@ -68,7 +68,7 @@
               </view>
             </view>
           </view>
-          <text class="sentiment-tap-hint">点击查看详情 ›</text>
+          <text class="sentiment-tap-hint" bindtap="openSentimentModal">点击查看详情 ›</text>
         </view>
       </view>
     </view>
@@ -162,7 +162,7 @@
           </view>
           <view class="guide-metric">
             <text class="metric-value">{{ipoDrawCount}}</text>
-            <text class="metric-label">已上市</text>
+            <text class="metric-label">近期上市</text>
           </view>
         </view>
       </view>
@@ -172,7 +172,11 @@
   <view class="content" wx:if="{{currentTab === 'ipo'}}">
     <view class="ipo-calendar">
       <view class="calendar-header">
-        <text class="calendar-month">2026年6月</text>
+        <view class="calendar-nav">
+          <text class="nav-btn" bindtap="prevMonth">‹</text>
+          <text class="calendar-month">{{calendarMonthLabel}}</text>
+          <text class="nav-btn" bindtap="nextMonth">›</text>
+        </view>
         <view class="calendar-legend">
           <view class="legend-item">
             <view class="legend-dot subscribe"></view>
@@ -198,20 +202,35 @@
         <text class="weekday">六</text>
       </view>
       <view class="calendar-days">
-        <view class="day empty"></view>
-        <view class="day empty"></view>
-        <view class="day empty"></view>
-        <view class="day empty"></view>
-        <view class="day">21<view class="day-markers"><view class="marker subscribe"></view></view></view>
-        <view class="day active">22<view class="day-markers"><view class="marker subscribe"></view><view class="marker draw"></view></view></view>
-        <view class="day">23<view class="day-markers"><view class="marker subscribe"></view><view class="marker draw"></view></view></view>
-        <view class="day">24<view class="day-markers"><view class="marker subscribe"></view><view class="marker draw"></view></view></view>
-        <view class="day">25<view class="day-markers"><view class="marker subscribe"></view></view></view>
-        <view class="day today">26<view class="day-markers"><view class="marker subscribe"></view><view class="marker draw"></view><view class="marker list"></view></view></view>
-        <view class="day">27<view class="day-markers"><view class="marker list"></view></view></view>
-        <view class="day">28</view>
-        <view class="day">29</view>
-        <view class="day">30</view>
+        <view class="day {{item.isEmpty ? 'empty' : ''}} {{item.isToday ? 'today' : ''}} {{item.hasEvents ? 'has-events' : ''}}" wx:for="{{calendarDays}}" wx:key="index" bindtap="onDayTap" data-index="{{index}}">
+          <text wx:if="{{!item.isEmpty}}">{{item.day}}</text>
+          <view class="day-markers" wx:if="{{item.hasEvents}}">
+            <view class="marker subscribe" wx:if="{{item.markerTypes.indexOf('subscribe') >= 0}}"></view>
+            <view class="marker draw" wx:if="{{item.markerTypes.indexOf('draw') >= 0}}"></view>
+            <view class="marker list" wx:if="{{item.markerTypes.indexOf('list') >= 0}}"></view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 日期事件弹窗 -->
+    <view class="day-events-overlay" wx:if="{{showDayEvents}}" bindtap="closeDayEvents">
+      <view class="day-events-panel" catchtap="">
+        <view class="day-events-header">
+          <text class="day-events-title">当日打新事件</text>
+          <text class="day-events-close" bindtap="closeDayEvents">×</text>
+        </view>
+        <view class="day-events-list">
+          <view class="day-event-item" wx:for="{{selectedDayEvents}}" wx:key="index">
+            <view class="event-type-tag {{item.type}}">
+              <text wx:if="{{item.type === 'subscribe'}}">申购</text>
+              <text wx:elif="{{item.type === 'draw'}}">抽签</text>
+              <text wx:elif="{{item.type === 'list'}}">上市</text>
+            </view>
+            <text class="event-name">{{item.name}}</text>
+            <text class="event-code">{{item.code}}</text>
+          </view>
+        </view>
       </view>
     </view>
 
@@ -318,33 +337,15 @@
       </view>
       <view class="modal-body">
         <view class="detail-section">
-          <text class="detail-section-title">计算公式</text>
-          <view class="formula-box">
-            <text class="formula-text">综合情绪分 = (沪市情绪分 + 深市情绪分) ÷ 2</text>
-          </view>
-          <view class="formula-calc">
-            <text class="formula-calc-text">= ({{shSentiment}} + {{szSentiment}}) ÷ 2 = {{mergedSentiment}}</text>
-          </view>
-        </view>
-
-        <view class="detail-section">
           <text class="detail-section-title">基础数据</text>
           <view class="detail-grid">
             <view class="detail-item">
-              <text class="detail-label">沪市情绪</text>
-              <text class="detail-value {{sentimentLevel}}">{{shSentiment}}</text>
-            </view>
-            <view class="detail-item">
-              <text class="detail-label">深市情绪</text>
-              <text class="detail-value {{sentimentLevel}}">{{szSentiment}}</text>
+              <text class="detail-label">综合情绪分</text>
+              <text class="detail-value {{sentimentLevel}}">{{mergedSentiment}}</text>
             </view>
             <view class="detail-item">
               <text class="detail-label">两市成交额</text>
               <text class="detail-value">{{sentimentDetail.totalVolume}}</text>
-            </view>
-            <view class="detail-item">
-              <text class="detail-label">综合情绪分</text>
-              <text class="detail-value {{sentimentLevel}}">{{mergedSentiment}}</text>
             </view>
             <view class="detail-item">
               <text class="detail-label">两市上涨</text>
@@ -353,6 +354,14 @@
             <view class="detail-item">
               <text class="detail-label">两市下跌</text>
               <text class="detail-value negative">{{sentimentDetail.totalDownCount}}</text>
+            </view>
+            <view class="detail-item">
+              <text class="detail-label">沪市成交</text>
+              <text class="detail-value">{{sentimentDetail.shVolume}}</text>
+            </view>
+            <view class="detail-item">
+              <text class="detail-label">深市成交</text>
+              <text class="detail-value">{{sentimentDetail.szVolume}}</text>
             </view>
           </view>
         </view>
@@ -366,19 +375,77 @@
             </view>
             <view class="level-item">
               <view class="level-dot warm"></view>
-              <text class="level-text">偏热 (60-70)：情绪偏暖，谨慎乐观</text>
+              <text class="level-text">偏热 (55-70)：情绪偏暖，谨慎乐观</text>
             </view>
             <view class="level-item">
               <view class="level-dot neutral"></view>
-              <text class="level-text">中性 (40-60)：多空平衡，震荡为主</text>
+              <text class="level-text">中性 (35-55)：多空平衡，震荡为主</text>
             </view>
             <view class="level-item">
               <view class="level-dot cool"></view>
-              <text class="level-text">偏冷 (30-40)：情绪偏弱，关注机会</text>
+              <text class="level-text">偏冷 (25-35)：情绪偏弱，关注机会</text>
             </view>
             <view class="level-item">
               <view class="level-dot cold"></view>
-              <text class="level-text">过冷 (≤30)：市场低迷，布局良机</text>
+              <text class="level-text">过冷 (≤25)：市场低迷，布局良机</text>
+            </view>
+          </view>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="modal-overlay" wx:if="{{showFormulaModal}}" bindtap="closeFormulaModal">
+    <view class="modal-content sentiment-modal" catchtap="">
+      <view class="modal-header">
+        <text class="modal-title">情绪分计算</text>
+        <view class="modal-close" bindtap="closeFormulaModal">×</view>
+      </view>
+      <view class="modal-body">
+        <view class="detail-section">
+          <text class="detail-section-title">计算公式</text>
+          <view class="formula-box">
+            <text class="formula-text">综合情绪分 = 涨跌分 × 60% + 量能趋势分 × 40%</text>
+          </view>
+          <view class="formula-calc">
+            <text class="formula-calc-text">= {{sentimentFormula.ratioScore}} × 0.6 + {{sentimentFormula.volTrendScore}} × 0.4 = {{mergedSentiment}}</text>
+          </view>
+        </view>
+
+        <view class="detail-section">
+          <text class="detail-section-title">计算参数</text>
+          <view class="calc-params">
+            <view class="calc-param-row">
+              <text class="calc-param-label">涨跌得分</text>
+              <text class="calc-param-value">{{sentimentFormula.ratioScore}}</text>
+            </view>
+            <view class="calc-param-row">
+              <text class="calc-param-label">涨跌权重</text>
+              <text class="calc-param-value">60%</text>
+            </view>
+            <view class="calc-param-row">
+              <text class="calc-param-label">量能趋势分</text>
+              <text class="calc-param-value">{{sentimentFormula.volTrendScore}}</text>
+            </view>
+            <view class="calc-param-row">
+              <text class="calc-param-label">量能权重</text>
+              <text class="calc-param-value">40%</text>
+            </view>
+            <view class="calc-param-row">
+              <text class="calc-param-label">昨成交量</text>
+              <text class="calc-param-value">{{sentimentFormula.prevVolume}}亿</text>
+            </view>
+            <view class="calc-param-row">
+              <text class="calc-param-label">量比</text>
+              <text class="calc-param-value">{{sentimentFormula.volumeChangePct}}%</text>
+            </view>
+            <view class="calc-param-row">
+              <text class="calc-param-label">5日均量</text>
+              <text class="calc-param-value">{{sentimentFormula.vol5dAvg}}亿</text>
+            </view>
+            <view class="calc-param-row">
+              <text class="calc-param-label">vs 5日均量</text>
+              <text class="calc-param-value">{{sentimentFormula.vol5dChangePct}}%</text>
             </view>
           </view>
         </view>
@@ -394,13 +461,13 @@
       </view>
       <view class="modal-body">
         <view class="tip-content">
-          <text class="tip-text">📊 北向资金数据更新频率：</text>
-          <text class="tip-text-highlight">每15分钟更新一次</text>
-          <text class="tip-text-note">非实时数据，仅供参考。数据来源于沪深交易所公开信息，可能存在延迟。</text>
+          <text class="tip-text">📊 板块资金流向更新频率：</text>
+          <text class="tip-text-highlight">实时更新</text>
+          <text class="tip-text-note">数据来源于东方财富公开信息，展示各行业板块主力资金净流入/流出情况。</text>
         </view>
         <view class="tip-content">
-          <text class="tip-text">💡 什么是北向资金？</text>
-          <text class="tip-text-note">北向资金指通过沪股通和深股通从香港流入内地股市的资金，常被视为外资动向的重要指标。</text>
+          <text class="tip-text">💡 如何解读？</text>
+          <text class="tip-text-note">主力资金净流入越大，说明该板块越受资金青睐，可能存在上涨动力；净流出则相反。</text>
         </view>
       </view>
     </view>

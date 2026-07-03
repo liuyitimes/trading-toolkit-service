@@ -315,6 +315,129 @@
   font-weight: 500;
 }
 
+/* ==================== 暗盘行情 ==================== */
+.dark-pool-section {
+  background: #FFFFFF;
+  border: 1rpx solid #D0D7DE;
+  border-radius: 12rpx;
+  margin: 20rpx 20rpx 0;
+  padding: 24rpx;
+}
+
+.dp-header {
+  margin-bottom: 20rpx;
+}
+
+.dp-title {
+  font-size: 30rpx;
+  font-weight: 700;
+  color: #1F2328;
+}
+
+.dp-subtitle {
+  font-size: 22rpx;
+  color: #818B98;
+  margin-left: 12rpx;
+}
+
+.dp-scroll {
+  display: flex;
+  white-space: nowrap;
+}
+
+.dp-card {
+  display: inline-block;
+  width: 280rpx;
+  background: #F6F8FA;
+  border: 1rpx solid #D0D7DE;
+  border-radius: 8rpx;
+  padding: 20rpx;
+  margin-right: 16rpx;
+  flex-shrink: 0;
+}
+
+.dp-card-top {
+  margin-bottom: 16rpx;
+}
+
+.dp-name {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #1F2328;
+  display: block;
+}
+
+.dp-code {
+  font-size: 22rpx;
+  color: #818B98;
+}
+
+.dp-row {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8rpx;
+}
+
+.dp-label {
+  font-size: 22rpx;
+  color: #818B98;
+}
+
+.dp-val {
+  font-size: 24rpx;
+  font-weight: 600;
+  color: #1F2328;
+}
+
+.dp-val.dp-up {
+  color: #CF222E;
+}
+
+.dp-val.dp-down {
+  color: #1A7F37;
+}
+
+.dark-pool-empty {
+  text-align: center;
+  padding: 24rpx;
+}
+
+.dp-empty-text {
+  font-size: 24rpx;
+  color: #818B98;
+}
+
+/* ==================== 新增字段样式 ==================== */
+.tabs-scroll {
+  display: flex;
+  white-space: nowrap;
+}
+
+.tabs-scroll .tab {
+  display: inline-block;
+  flex-shrink: 0;
+  padding: 24rpx 24rpx;
+}
+
+.ipo-value.highlight {
+  color: #CF222E;
+  font-weight: 700;
+}
+
+.ipo-value.dp-up {
+  color: #CF222E;
+}
+
+.ipo-value.dp-down {
+  color: #1A7F37;
+}
+
+.ipo-status.pending {
+  background: #FFF8E5;
+  color: #9A6700;
+  border: 1rpx solid #D4A72C;
+}
+
 /* ==================== 暗夜模式覆盖 ==================== */
 .dark-mode .container {
   background: #0D1117;
@@ -435,4 +558,64 @@
 
 .dark-mode .error-message {
   color: #8B949E;
+}
+
+.dark-mode .ipo-value.highlight {
+  color: #F85149;
+}
+
+.dark-mode .ipo-value.dp-up {
+  color: #F85149;
+}
+
+.dark-mode .ipo-value.dp-down {
+  color: #3FB950;
+}
+
+.dark-mode .ipo-status.pending {
+  background: #3D2E00;
+  color: #D29922;
+  border-color: #9E6A03;
+}
+
+.dark-mode .dark-pool-section {
+  background: #161B22;
+  border-color: #30363D;
+}
+
+.dark-mode .dp-title {
+  color: #E6EDF3;
+}
+
+.dark-mode .dp-subtitle {
+  color: #6E7681;
+}
+
+.dark-mode .dp-card {
+  background: #0D1117;
+  border-color: #30363D;
+}
+
+.dark-mode .dp-name {
+  color: #E6EDF3;
+}
+
+.dark-mode .dp-code {
+  color: #6E7681;
+}
+
+.dark-mode .dp-val {
+  color: #E6EDF3;
+}
+
+.dark-mode .dp-val.dp-up {
+  color: #F85149;
+}
+
+.dark-mode .dp-val.dp-down {
+  color: #3FB950;
+}
+
+.dark-mode .dp-label {
+  color: #6E7681;
 }

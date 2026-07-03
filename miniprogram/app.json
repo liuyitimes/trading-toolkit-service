@@ -4,6 +4,7 @@
     "pages/convertible/index",
     "pages/lof/index",
     "pages/hkipo/index",
+    "pages/hkipoDetail/index",
     "pages/setting/index",
     "pages/bondDetail/index",
     "pages/test/index",

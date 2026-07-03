@@ -1,0 +1,15 @@
+{
+  "data": {
+    "items": [],
+    "page": 1,
+    "page_size": 100,
+    "total": 0
+  },
+  "meta": {
+    "cache_expire_at": null,
+    "cached": true,
+    "source": "cache",
+    "update_time": "2026-06-25T13:13:50.720546+08:00"
+  },
+  "success": true
+}

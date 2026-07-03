@@ -30,7 +30,7 @@ const TEST_CASES = [
       if (data.length === 0) errors.push('数组为空')
       if (data.length > 0) {
         const item = data[0]
-        const requiredFields = ['转债代码', '转债名称', '转债价格', '转股溢价率']
+        const requiredFields = ['bond_code', 'bond_name', 'price', 'premium_rate']
         requiredFields.forEach(f => {
           if (item[f] === undefined) errors.push(`缺少字段: ${f}`)
         })

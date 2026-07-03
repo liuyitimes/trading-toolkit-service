@@ -5,6 +5,8 @@ const favoriteManager = require('../../utils/favoriteManager')
 Page({
   data: {
     currentTab: 'all',
+    sortField: '',
+    sortOrder: 'desc',
     allList: [],
     upcomingList: [],
     currentList: [],
@@ -13,7 +15,8 @@ Page({
     showSearch: false,
     loading: true,
     error: null,
-    isDarkMode: false
+    isDarkMode: false,
+    darkPoolList: []
   },
 
   onLoad() {
@@ -26,9 +29,24 @@ Page({
     const theme = app.getTheme ? app.getTheme() : 'light'
     this.setData({ isDarkMode: theme === 'dark' })
     this.refreshFavorites()
+    this.checkStateUpdates()
     if (typeof this.getTabBar === 'function' && this.getTabBar()) {
       this.getTabBar().checkDarkMode()
       this.getTabBar().setData({ selected: 3 })
+    }
+  },
+
+  checkStateUpdates() {
+    const gData = app.globalData || {}
+    const currentFavVer = gData._lastFavVersion_hkipo || 0
+    const currentIpoVer = gData._lastIpoVersion_hkipo || 0
+    if ((gData.favoriteVersion || 0) > currentFavVer) {
+      gData._lastFavVersion_hkipo = gData.favoriteVersion
+      this.refreshFavorites()
+    }
+    if ((gData.ipoStatusVersion || 0) > currentIpoVer) {
+      gData._lastIpoVersion_hkipo = gData.ipoStatusVersion
+      this.loadIpoStatus()
     }
   },
 
@@ -47,9 +65,22 @@ Page({
         return
       }
 
+      let filtered = this.data.allList
+      if (tab === 'all') {
+        filtered = this.data.allList
+      } else if (tab === 'upcoming') {
+        filtered = this.data.allList.filter(i => i.status === '申购中' || i.status === '待申购')
+      } else if (tab === 'pending') {
+        filtered = this.data.allList.filter(i => i.status === '即将上市' || i.status === '中签公布')
+      } else if (tab === 'listed') {
+        filtered = this.data.allList.filter(i => i.status === '已上市')
+      } else if (tab === 'darkpool') {
+        filtered = this.data.allList.filter(i => i.dark_pool_status === '暗盘中')
+      }
+
       this.setData({
         currentTab: tab,
-        currentList: tab === 'all' ? this.data.allList : this.data.upcomingList
+        currentList: filtered
       })
     } catch (err) {
       console.error('Switch tab failed:', err)
@@ -60,21 +91,29 @@ Page({
     this.setData({ loading: true, error: null })
 
     try {
-      const [allList, upcomingList] = await Promise.all([
+      const [allList, upcomingList, darkPoolList] = await Promise.all([
         callMarketSafe('hkipoList'),
-        callMarketSafe('hkipoUpcoming')
+        callMarketSafe('hkipoUpcoming'),
+        callMarketSafe('hkipoDarkPool')
       ])
+
+      const darkPool = (darkPoolList || []).map(item => ({
+        code: item.code || '--',
+        name: item.name || '--',
+        dark_price: item.dark_price || null,
+        ipo_price: item.ipo_price || null,
+        dark_change: item.dark_change || item.dark_pool_change || null
+      }))
 
       const all = allList || []
       const upcoming = upcomingList || []
 
       if (all.length === 0 && upcoming.length === 0) {
-        const mockData = this.getMockData()
-        const formatted = this.normalizeList(mockData)
         this.setData({
-          allList: formatted,
-          upcomingList: this.normalizeList(mockData.filter(i => i.status !== '已上市')),
-          currentList: formatted,
+          allList: [],
+          upcomingList: [],
+          currentList: [],
+          darkPoolList: darkPool,
           loading: false
         })
         return
@@ -84,32 +123,24 @@ Page({
         allList: this.normalizeList(all),
         upcomingList: this.normalizeList(upcoming),
         currentList: this.normalizeList(this.data.currentTab === 'all' ? all : upcoming),
+        darkPoolList: darkPool,
         loading: false
       })
     } catch (err) {
       console.error('Failed to load HK IPO data:', err)
-      const mockData = this.getMockData()
-      const formatted = this.normalizeList(mockData)
       this.setData({
-        allList: formatted,
-        upcomingList: this.normalizeList(mockData.filter(i => i.status !== '已上市')),
-        currentList: formatted,
-        loading: false
+        allList: [],
+        upcomingList: [],
+        currentList: [],
+        darkPoolList: [],
+        loading: false,
+        error: '数据加载失败，请下拉刷新重试'
       })
     }
   },
 
   getMockData() {
-    return [
-      { name: '美的集团', code: 'HK03690', status: '已上市', ipo_price: 52.00, list_date: '2026-06-18', lot_size: 100, change_pct: 5.23 },
-      { name: '小鹏汽车', code: 'HK09868', status: '申购中', ipo_price: 68.50, lot_size: 100 },
-      { name: '京东健康', code: 'HK06618', status: '即将上市', ipo_price: 72.80, list_date: '2026-06-25', lot_size: 100 },
-      { name: '哔哩哔哩', code: 'HK09626', status: '已上市', ipo_price: 988.00, list_date: '2026-06-10', lot_size: 20, change_pct: -2.15 },
-      { name: '蚂蚁集团', code: 'HK06688', status: '申购中', ipo_price: 88.00, lot_size: 50 },
-      { name: '海底捞', code: 'HK06862', status: '已上市', ipo_price: 28.60, list_date: '2026-05-20', lot_size: 1000, change_pct: 1.78 },
-      { name: '腾讯音乐', code: 'HK01698', status: '即将上市', ipo_price: 28.00, list_date: '2026-06-28', lot_size: 100 },
-      { name: '快手科技', code: 'HK01024', status: '已上市', ipo_price: 68.35, list_date: '2026-04-15', lot_size: 100, change_pct: 0.45 }
-    ]
+    return []
   },
 
   normalizeList(list) {
@@ -127,6 +158,10 @@ Page({
     const ipoPrice = item.ipo_price || '--'
     const listDate = item.list_date || ''
     const lotSize = item.lot_size || '--'
+    const applyEndDate = item.apply_end_date || ''
+    const oversubscription = item.oversubscription || null
+    const darkPoolChange = item.dark_pool_change || null
+    const darkPoolStatus = item.dark_pool_status || ''
     
     let changePct = '--'
     let isUp = true
@@ -142,6 +177,18 @@ Page({
 
     const isFavorite = favoriteManager.isFavorite(code, 'hkipo')
 
+    let oversubscriptionText = '--'
+    if (typeof oversubscription === 'number') {
+      oversubscriptionText = oversubscription >= 100 ? oversubscription.toFixed(0) + '倍' : oversubscription.toFixed(1) + '倍'
+    }
+
+    let darkPoolChangeText = '--'
+    let darkPoolIsUp = false
+    if (typeof darkPoolChange === 'number') {
+      darkPoolChangeText = (darkPoolChange >= 0 ? '+' : '') + darkPoolChange.toFixed(2) + '%'
+      darkPoolIsUp = darkPoolChange >= 0
+    }
+
     return {
       ...item,
       name,
@@ -150,12 +197,20 @@ Page({
       ipo_price: ipoPrice,
       list_date: listDate,
       lot_size: lotSize,
+      apply_end_date: applyEndDate,
       change_pct: changePct,
       isUp,
       showChange,
       isFavorite,
       rawChange,
-      exchange: '港'
+      exchange: '港',
+      oversubscription: oversubscription,
+      oversubscriptionText,
+      isHighOversubscription: oversubscription >= 100,
+      dark_pool_status: darkPoolStatus,
+      darkPoolChangeText,
+      darkPoolIsUp,
+      showDarkPool: darkPoolStatus === '暗盘中'
     }
   },
 
@@ -226,6 +281,39 @@ Page({
       upcomingList,
       currentList,
       filteredList
+    })
+  },
+
+  toggleSort(e) {
+    const field = e.currentTarget.dataset.field
+    if (!field) return
+    let newOrder = 'desc'
+    if (this.data.sortField === field && this.data.sortOrder === 'desc') {
+      newOrder = 'asc'
+    }
+    const sorted = [...this.data.currentList].sort((a, b) => {
+      let va = 0, vb = 0
+      if (field === 'oversubscription') {
+        va = a.oversubscription || 0
+        vb = b.oversubscription || 0
+      } else if (field === 'darkPool') {
+        va = a.dark_pool_change || 0
+        vb = b.dark_pool_change || 0
+      }
+      return newOrder === 'desc' ? vb - va : va - vb
+    })
+    this.setData({
+      sortField: field,
+      sortOrder: newOrder,
+      currentList: sorted
+    })
+  },
+
+  goToDetail(e) {
+    const { code } = e.currentTarget.dataset
+    if (!code) return
+    wx.navigateTo({
+      url: `/pages/hkipoDetail/index?code=${code}`
     })
   }
 })

@@ -3,18 +3,59 @@ const config = require('./config')
 App({
   globalData: {
     cloudRunUrl: '',
-    cloudEnv: config.cloudEnv || 'prod-1g3p1',
+    cloudEnv: '',
+    currentEnv: '',
     isConfigured: false,
     theme: 'light',
-    defaultTab: 'index'
+    defaultTab: 'index',
+    favoriteVersion: 0,
+    ipoStatusVersion: 0
   },
 
   onLaunch() {
+    // 初始化环境
+    this.initEnv()
     this.initCloud()
     this.loadCloudRunUrl()
     this.loadUserSettings()
     this.updateTabBarStyle(this.globalData.theme)
     this.navigateToDefaultTab()
+  },
+
+  /**
+   * 获取当前环境
+   * autoSwitch: true 时根据小程序版本自动切换
+   * autoSwitch: false 时使用 config.currentEnv
+   */
+  getEnv() {
+    if (config.autoSwitch) {
+      // 根据小程序版本自动切换
+      // __wxConfig.envVersion: 'develop' | 'trial' | 'release'
+      try {
+        const envVersion = __wxConfig.envVersion
+        if (envVersion === 'develop') {
+          return 'development'
+        }
+        // trial（体验版）和 release（正式版）都用 production
+        return 'production'
+      } catch (e) {
+        // 本地开发工具可能没有 __wxConfig，默认用 development
+        console.warn('无法获取小程序版本，使用 development 环境')
+        return 'development'
+      }
+    }
+    // 手动指定环境
+    return config.currentEnv || 'development'
+  },
+
+  /**
+   * 初始化环境配置
+   */
+  initEnv() {
+    const env = this.getEnv()
+    this.globalData.currentEnv = env
+    this.globalData.cloudEnv = config.cloudEnv[env] || 'prod-1g3p1'
+    console.log(`[Env] 当前环境: ${env}, 云环境: ${this.globalData.cloudEnv}`)
   },
 
   navigateToDefaultTab() {
@@ -41,11 +82,11 @@ App({
     }
     try {
       wx.cloud.init({
-        env: config.cloudEnv || 'prod-1g3p1',
+        env: this.globalData.cloudEnv,
         traceUser: true
       })
       this.globalData.isConfigured = true
-      console.log('云开发初始化成功')
+      console.log('云开发初始化成功, 环境:', this.globalData.cloudEnv)
     } catch (err) {
       console.error('云开发初始化失败:', err)
     }
@@ -57,11 +98,14 @@ App({
       if (savedUrl) {
         this.globalData.cloudRunUrl = savedUrl
       } else {
-        this.globalData.cloudRunUrl = config.development.baseUrl
+        // 根据当前环境选择对应的 baseUrl
+        const envConfig = config[this.globalData.currentEnv] || config.development
+        this.globalData.cloudRunUrl = envConfig.baseUrl
       }
     } catch (err) {
       console.error('加载云托管地址失败:', err)
-      this.globalData.cloudRunUrl = config.development.baseUrl
+      const envConfig = config[this.globalData.currentEnv] || config.development
+      this.globalData.cloudRunUrl = envConfig.baseUrl
     }
   },
 
@@ -81,7 +125,23 @@ App({
   },
 
   getCloudRunUrl() {
-    return this.globalData.cloudRunUrl || config.development.baseUrl
+    if (this.globalData.cloudRunUrl) {
+      return this.globalData.cloudRunUrl
+    }
+    const envConfig = config[this.globalData.currentEnv] || config.development
+    return envConfig.baseUrl
+  },
+
+  /**
+   * 获取当前环境信息（调试用）
+   */
+  getEnvInfo() {
+    return {
+      env: this.globalData.currentEnv,
+      cloudEnv: this.globalData.cloudEnv,
+      cloudRunUrl: this.globalData.cloudRunUrl,
+      autoSwitch: config.autoSwitch
+    }
   },
 
   loadUserSettings() {

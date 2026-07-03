@@ -65,7 +65,7 @@ Page({
       bondCode: '118070',
       stockName: '南芯科技',
       stockCode: '688484',
-      exchange: '沪',
+      exchange: 'sh',
       price: 100.00,
       conversionValue: 122.95,
       premiumRate: -18.66,
@@ -92,39 +92,39 @@ Page({
   },
 
   formatBondInfo(data) {
-    const price = data.price || data['转债价格'] || 0
-    const conversionValue = data.conversionValue || data['转股价值'] || 0
-    const premiumRate = data.premiumRate || data['转股溢价率'] || 0
+    const price = data.price || 0
+    const conversionValue = data.conversionValue || 0
+    const premiumRate = data.premiumRate || 0
 
     return {
-      bondName: data.bondName || data['转债名称'] || '--',
-      bondCode: data.bondCode || data['转债代码'] || '--',
-      stockName: data.stockName || data['正股名称'] || '--',
-      stockCode: data.stockCode || data['正股代码'] || '--',
-      exchange: data.exchange || '沪',
+      bondName: data.bondName || '--',
+      bondCode: data.bondCode || '--',
+      stockName: data.stockName || '--',
+      stockCode: data.stockCode || '--',
+      exchange: data.exchange || 'sh',
       price: formatNumber(price),
       conversionValue: formatNumber(conversionValue),
       premiumRate: formatPercent(premiumRate),
       premiumValue: premiumRate,
       premiumClass: premiumRate < 0 ? 'negative' : '',
-      doubleLow: formatNumber(data.doubleLow || data['双低'] || 0, 1),
-      pureBondValue: formatNumber(data.pureBondValue || data['纯债价值'] || 0),
-      conversionPrice: formatNumber(data.conversionPrice || data['转股价'] || 0),
-      conversionRatio: formatNumber(data.conversionRatio || data['转股比例'] || 0, 3),
-      issueSize: formatNumber(data.issueSize || data['发行规模'] || 0) + '亿',
-      remainingSize: formatNumber(data.remainingSize || data['剩余规模'] || 0) + '亿',
-      listingDate: data.listingDate || data['上市日期'] || '--',
-      maturityDate: data.maturityDate || data['到期日期'] || '--',
+      doubleLow: formatNumber(data.doubleLow || 0, 1),
+      pureBondValue: formatNumber(data.pureBondValue || 0),
+      conversionPrice: formatNumber(data.conversionPrice || 0),
+      conversionRatio: formatNumber(data.conversionRatio || 0, 3),
+      issueSize: formatNumber(data.issueSize || 0) + '亿',
+      remainingSize: formatNumber(data.remainingSize || 0) + '亿',
+      listingDate: data.listingDate || '--',
+      maturityDate: data.maturityDate || '--',
       remainingYears: data.remainingYears ? data.remainingYears.toFixed(2) + '年' : '--',
-      couponRate: data.couponRate || data['票面利率'] || '--',
+      couponRate: data.couponRate || '--',
       putPrice: data.putPrice ? formatNumber(data.putPrice) : '--',
       callPrice: data.callPrice ? formatNumber(data.callPrice) : '--',
       downRevisePrice: data.downRevisePrice ? formatNumber(data.downRevisePrice) : '--',
-      creditRating: data.creditRating || data['信用评级'] || '--',
-      guarantee: data.guarantee || data['担保方式'] || '--',
-      issuer: data.issuer || data['发行人'] || '--',
-      industry: data.industry || data['所属行业'] || '--',
-      ytm: data.ytm || data['到期收益率'] || '--',
+      creditRating: data.creditRating || '--',
+      guarantee: data.guarantee || '--',
+      issuer: data.issuer || '--',
+      industry: data.industry || '--',
+      ytm: data.ytm || '--',
       turnoverRate: data.turnoverRate ? formatPercent(data.turnoverRate) : '--'
     }
   },

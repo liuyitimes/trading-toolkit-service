@@ -3,6 +3,25 @@ const cb = require('./data/convertible')
 const lof = require('./data/lof')
 const hkipo = require('./data/hkipo')
 const mock = require('./data/mock')
+const axios = require('axios')
+
+// 云托管后端地址（优先从环境变量获取）
+const CLOUDRUN_BASE_URL = process.env.CLOUDRUN_BASE_URL || 'http://localhost:8080'
+
+// 调用云托管后端接口，失败返回 null
+async function callCloudRun(path, params = {}) {
+  try {
+    const url = `${CLOUDRUN_BASE_URL}${path}`
+    const res = await axios.get(url, { params, timeout: 8000 })
+    if (res.data && res.data.success !== false) {
+      return res.data.data || res.data
+    }
+    return null
+  } catch (err) {
+    console.error(`云托管调用失败 ${path}:`, err.message)
+    return null
+  }
+}
 
 exports.main = async (event, context) => {
   const { action } = event
@@ -90,6 +109,91 @@ exports.main = async (event, context) => {
             time: new Date().toISOString()
           }
         }
+      }
+
+      // ==================== 可转债详情（云托管） ====================
+      case 'convertibleDetail': {
+        const bondCode = event.code || event.bondCode || ''
+        if (!bondCode) {
+          return { success: false, error: '缺少可转债代码参数' }
+        }
+
+        // 先尝试调用云托管后端
+        const backendData = await callCloudRun(`/api/v1/convertible/detail/${bondCode}`)
+        if (backendData) {
+          return { success: true, data: backendData, source: 'cloudrun' }
+        }
+
+        // 云托管失败时，使用本地 mock 数据兜底
+        const mockBond = mock.CONVERTIBLE_BOND_LIST.find(
+          b => String(b['转债代码']) === String(bondCode)
+        )
+        if (mockBond) {
+          const codeHash = String(bondCode).split('').reduce((sum, c) => sum + c.charCodeAt(0), 0)
+          const price = mockBond['转债价格'] || 0
+          const cv = mockBond['转股价值'] || 0
+          return {
+            success: true,
+            data: {
+              ...mockBond,
+              pure_bond_value: Math.round((90 + (codeHash % 100) / 10) * 100) / 100,
+              conversion_price: cv > 0 ? Math.round(100 * price / cv * 100) / 100 : 0,
+              rating: price >= 150 ? 'A+' : price >= 120 ? 'AA' : price >= 100 ? 'AA+' : 'AAA',
+              maturity_date: `${2028 + (codeHash % 5)}-${String(1 + (codeHash % 12)).padStart(2, '0')}-${String(1 + (codeHash % 28)).padStart(2, '0')}`
+            },
+            source: 'mock'
+          }
+        }
+        return { success: false, error: `可转债 ${bondCode} 不存在` }
+      }
+
+      // ==================== 新债列表（云托管） ====================
+      case 'convertibleNewBonds': {
+        // 先尝试调用云托管后端
+        const backendData = await callCloudRun('/api/v1/convertible/list', { new_bonds: true })
+        if (backendData) {
+          return { success: true, data: backendData, source: 'cloudrun' }
+        }
+
+        // 云托管失败时，使用本地 mock 数据兜底
+        // 筛选价格接近100的新债（通常新上市可转债价格在100附近）
+        const newBonds = mock.CONVERTIBLE_BOND_LIST
+          .filter(b => b['转债价格'] <= 105 && b['转债价格'] >= 95)
+          .sort((a, b) => a['转债价格'] - b['转债价格'])
+        return {
+          success: true,
+          data: {
+            total: newBonds.length,
+            page: 1,
+            page_size: 100,
+            items: newBonds
+          },
+          source: 'mock'
+        }
+      }
+
+      // ==================== 市场情绪（云托管） ====================
+      case 'sentiment': {
+        // 先尝试调用云托管后端
+        const backendData = await callCloudRun('/api/v1/market/sentiment')
+        if (backendData) {
+          return { success: true, data: backendData, source: 'cloudrun' }
+        }
+
+        // 云托管失败时，使用本地 mock 数据兜底
+        return { success: true, data: mock.MARKET_SENTIMENT, source: 'mock' }
+      }
+
+      // ==================== 资金流向（云托管） ====================
+      case 'fundFlow': {
+        // 先尝试调用云托管后端
+        const backendData = await callCloudRun('/api/v1/market/fund-flow')
+        if (backendData) {
+          return { success: true, data: backendData, source: 'cloudrun' }
+        }
+
+        // 云托管失败时，使用本地 mock 数据兜底
+        return { success: true, data: mock.FUND_FLOW, source: 'mock' }
       }
 
       default:

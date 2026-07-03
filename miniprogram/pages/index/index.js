@@ -18,12 +18,14 @@ Page({
     sentimentText: '中性',
     mergedSentiment: '--',
     mergedSentimentPercent: 50,
-    shSentiment: '--',
-    shSentimentTrend: '',
-    shSentimentPercent: 50,
-    szSentiment: '--',
-    szSentimentTrend: '',
-    szSentimentPercent: 50,
+    sentimentFormula: {
+      ratioScore: '--',
+      volTrendScore: '--',
+      prevVolume: '--',
+      volumeChangePct: '--',
+      vol5dAvg: '--',
+      vol5dChangePct: '--',
+    },
     sentimentDetail: {
       shVolume: '--',
       szVolume: '--',
@@ -36,12 +38,7 @@ Page({
       totalDownCount: '--'
     },
     showSentimentModal: false,
-    northFlow: '--',
-    northFlowTrend: '',
-    shFlow: '--',
-    shFlowTrend: '',
-    szFlow: '--',
-    szFlowTrend: '',
+    showFormulaModal: false,
     showFundFlowTip: false,
     showFundFlowModal: false,
     fundFlowChartType: 'treemap',
@@ -70,7 +67,13 @@ Page({
     lotteryCount: 1,
     winCount: 0,
     winRecords: [],
-    isDarkMode: false
+    isDarkMode: false,
+    calendarYear: 0,
+    calendarMonth: 0,
+    calendarMonthLabel: '',
+    calendarDays: [],
+    selectedDayEvents: [],
+    showDayEvents: false
   },
 
   quoteTimer: null,
@@ -80,15 +83,20 @@ Page({
 
   onLoad() {
     const theme = app.getTheme ? app.getTheme() : 'light'
+    // 首屏关键数据：主题 + 语录 + IPO 状态
     this.setData({ isDarkMode: theme === 'dark' })
-    try { this.initSectorData() } catch(e) { console.error('initSectorData error:', e) }
     try { this.initQuotes() } catch(e) { console.error('initQuotes error:', e) }
     try { this.startQuoteCarousel() } catch(e) { console.error('startQuoteCarousel error:', e) }
     try { this.loadIpoStatus() } catch(e) { console.error('loadIpoStatus error:', e) }
-    try { this.loadLotteryTargets() } catch(e) { console.error('loadLotteryTargets error:', e) }
-    try { this.loadWinRecords() } catch(e) { console.error('loadWinRecords error:', e) }
-    try { this.loadMockData() } catch(e) { console.error('loadMockData error:', e) }
+    // 加载真实数据（失败时才使用 Mock）
     this.loadData()
+    // 非关键数据延迟加载，避免阻塞首屏
+    setTimeout(() => {
+      try { this.initSectorData() } catch(e) { console.error('initSectorData error:', e) }
+      try { this.loadLotteryTargets() } catch(e) { console.error('loadLotteryTargets error:', e) }
+      try { this.loadWinRecords() } catch(e) { console.error('loadWinRecords error:', e) }
+      try { this.initCalendar() } catch(e) { console.error('initCalendar error:', e) }
+    }, 100)
   },
 
   onPullDownRefresh() {
@@ -108,6 +116,19 @@ Page({
     if (typeof this.getTabBar === 'function' && this.getTabBar()) {
       this.getTabBar().checkDarkMode()
       this.getTabBar().setData({ selected: 0 })
+    }
+    this.checkStateUpdates()
+  },
+
+  checkStateUpdates() {
+    const gData = app.globalData || {}
+    const currentFavVer = gData._lastFavVersion || 0
+    const currentIpoVer = gData._lastIpoVersion || 0
+    if ((gData.favoriteVersion || 0) > currentFavVer) {
+      gData._lastFavVersion = gData.favoriteVersion
+    }
+    if ((gData.ipoStatusVersion || 0) > currentIpoVer) {
+      gData._lastIpoVersion = gData.ipoStatusVersion
     }
   },
 
@@ -180,19 +201,20 @@ Page({
     this.clearTypingTimer()
     
     const fullText = this.data.currentQuote
+    const chunkSize = 3  // 每次渲染 3 个字符，减少 setData 次数
     let currentIndex = 0
     
-    const typeChar = () => {
+    const typeChars = () => {
       if (currentIndex < fullText.length) {
+        currentIndex = Math.min(currentIndex + chunkSize, fullText.length)
         this.setData({
-          displayedQuote: fullText.slice(0, currentIndex + 1)
+          displayedQuote: fullText.slice(0, currentIndex)
         })
-        currentIndex++
-        this.typingTimer = setTimeout(typeChar, this.typingSpeed)
+        this.typingTimer = setTimeout(typeChars, this.typingSpeed)
       }
     }
     
-    typeChar()
+    typeChars()
   },
 
   clearTypingTimer() {
@@ -214,16 +236,17 @@ Page({
   },
 
   async loadData() {
-    this.setData({ loadError: null })
+    this.setData({ loading: true, loadError: null })
+    let hasRealData = false
     try {
-      const [overview, signals, hkipoList, convertibleList] = await Promise.all([
-        callMarketSafe('overview'),
-        callMarketSafe('convertibleSignals'),
-        callMarketSafe('hkipoList'),
-        callMarketSafe('convertibleList')
-      ])
+      // 先发起所有请求，overview 到达后立即渲染首屏
+      const overviewPromise = callMarketSafe('overview')
+      const signalsPromise = callMarketSafe('convertibleSignals')
+      const hkipoPromise = callMarketSafe('hkipoList')
+      const convertiblePromise = callMarketSafe('convertibleList')
 
-      let hasRealData = false
+      // overview 最关键，到达即渲染
+      const overview = await overviewPromise
 
       const isValidOverview = (data) => {
         if (!data || typeof data !== 'object') return false
@@ -239,45 +262,36 @@ Page({
         const sentiment = overview.market_sentiment || {}
         const fundFlow = overview.fund_flow || {}
 
-        const shScore = typeof sentiment.sh_score === 'number' ? sentiment.sh_score : 50
-        const szScore = typeof sentiment.sz_score === 'number' ? sentiment.sz_score : 50
-        const avgScore = (shScore + szScore) / 2
+        const score = typeof sentiment.sentiment_score === 'number' ? sentiment.sentiment_score : 50
         let sentimentLevel = 'neutral'
         let sentimentText = '中性'
-        if (avgScore >= 70) {
+        if (score >= 70) {
           sentimentLevel = 'hot'
           sentimentText = '过热'
-        } else if (avgScore >= 60) {
+        } else if (score >= 55) {
           sentimentLevel = 'warm'
           sentimentText = '偏热'
-        } else if (avgScore <= 30) {
+        } else if (score <= 25) {
           sentimentLevel = 'cold'
           sentimentText = '过冷'
-        } else if (avgScore <= 40) {
+        } else if (score <= 35) {
           sentimentLevel = 'cool'
           sentimentText = '偏冷'
-        }
-
-        const formatFlow = (val) => {
-          if (typeof val !== 'number') return '--'
-          return val > 0 ? '+' + val.toFixed(2) : val.toFixed(2)
-        }
-        const getFlowTrend = (val) => {
-          if (typeof val !== 'number') return ''
-          return val >= 0 ? 'positive' : 'negative'
         }
 
         this.setData({
           sentimentLevel,
           sentimentText,
-          mergedSentiment: avgScore.toFixed(0),
-          mergedSentimentPercent: avgScore,
-          shSentiment: shScore.toFixed(0),
-          shSentimentTrend: shScore >= 50 ? 'positive' : 'negative',
-          shSentimentPercent: shScore,
-          szSentiment: szScore.toFixed(0),
-          szSentimentTrend: szScore >= 50 ? 'positive' : 'negative',
-          szSentimentPercent: szScore,
+          mergedSentiment: score.toFixed(0),
+          mergedSentimentPercent: score,
+          sentimentFormula: {
+            ratioScore: sentiment.sh_score != null ? sentiment.sh_score.toFixed(1) : '--',
+            volTrendScore: sentiment.vol_trend_score != null ? sentiment.vol_trend_score.toFixed(1) : '--',
+            prevVolume: sentiment.prev_volume != null ? sentiment.prev_volume.toFixed(0) : '--',
+            volumeChangePct: sentiment.volume_change_pct != null ? (sentiment.volume_change_pct > 0 ? '+' : '') + sentiment.volume_change_pct.toFixed(1) : '--',
+            vol5dAvg: sentiment.volume_5d_avg != null ? sentiment.volume_5d_avg.toFixed(0) : '--',
+            vol5dChangePct: sentiment.volume_5d_change_pct != null ? (sentiment.volume_5d_change_pct > 0 ? '+' : '') + sentiment.volume_5d_change_pct.toFixed(1) : '--',
+          },
           sentimentDetail: {
             shVolume: sentiment.sh_volume != null ? sentiment.sh_volume + '亿' : '--',
             szVolume: sentiment.sz_volume != null ? sentiment.sz_volume + '亿' : '--',
@@ -289,12 +303,6 @@ Page({
             totalUpCount: (sentiment.sh_up_count != null && sentiment.sz_up_count != null) ? (sentiment.sh_up_count + sentiment.sz_up_count) + '只' : '--',
             totalDownCount: (sentiment.sh_down_count != null && sentiment.sz_down_count != null) ? (sentiment.sh_down_count + sentiment.sz_down_count) + '只' : '--'
           },
-          northFlow: formatFlow(fundFlow.north),
-          northFlowTrend: getFlowTrend(fundFlow.north),
-          shFlow: formatFlow(fundFlow.sh),
-          shFlowTrend: getFlowTrend(fundFlow.sh),
-          szFlow: formatFlow(fundFlow.sz),
-          szFlowTrend: getFlowTrend(fundFlow.sz),
           doubleLowMedian: cb.double_low_median || '--',
           premiumMedian: cb.premium_median !== undefined ? cb.premium_median : '--',
           bondCount: cb.count || 0,
@@ -305,8 +313,18 @@ Page({
           ipoAvgReturn: ipo.avg_return !== undefined ? ipo.avg_return : '--',
           isMock: false
         })
+
+        if (fundFlow && fundFlow.sectors && fundFlow.sectors.length > 0) {
+          this.initRealSectorData(fundFlow)
+        }
+
         hasRealData = true
       }
+
+      // 其余数据到达后追加渲染
+      const signals = await signalsPromise
+      const hkipoList = await hkipoPromise
+      const convertibleList = await convertiblePromise
 
       const isValidSignals = (data) => {
         if (!data || typeof data !== 'object') return false
@@ -330,7 +348,7 @@ Page({
           ...item,
           market: '港',
           type: '港股IPO',
-          win_rate: item.win_rate != null ? item.win_rate : (item.status === '已上市' ? (10 + Math.random() * 20).toFixed(1) : item.status === '中签公布' ? (5 + Math.random() * 15).toFixed(1) : null),
+          win_rate: item.win_rate != null ? item.win_rate : null,
           timeline: this.generateTimeline(item, '港股IPO')
         }))
         const drawList = this.mergeIpoStatus(processedList)
@@ -342,15 +360,17 @@ Page({
       }
 
       if (isValidIpoList(convertibleList)) {
-        const today = '2026-06-26'
+        const today = new Date().toISOString().slice(0, 10)
         const newBonds = convertibleList.filter(b => {
-          const price = b['转债价格']
+          // 支持中文 key 和英文 snake_case key
+          const price = b['转债价格'] || b.price
           return price && price <= 100.5 && price >= 99.5
         }).slice(0, 3).map(b => {
-          const market = b['交易所'] || (String(b['正股代码']).startsWith('6') ? '沪' : '深')
+          const rawMarket = b['交易所'] || b.exchange || (String(b['正股代码'] || b.stock_code || '').startsWith('6') ? '沪' : '深')
+          const market = rawMarket === 'sh' ? '沪' : rawMarket === 'sz' ? '深' : rawMarket
           const baseItem = {
-            code: b['转债代码'],
-            name: b['转债名称'],
+            code: b['转债代码'] || b.bond_code,
+            name: b['转债名称'] || b.bond_name,
             market: market,
             type: '可转债',
             ipo_price: 100,
@@ -359,10 +379,10 @@ Page({
             lot_size: 10,
             apply_end_date: today,
             draw_date: '2026-06-30',
-            win_rate: (0.01 + Math.random() * 0.03).toFixed(3),
-            issue_size: Math.round(5 + Math.random() * 15) + '亿元',
-            industry: b['行业'] || '--',
-            pe_ratio: b['转股溢价率'] ? Math.round(20 + Math.random() * 40) : null
+            win_rate: null,
+            issue_size: null,
+            industry: b['行业'] || b.industry || '--',
+            pe_ratio: null
           }
           baseItem.timeline = this.generateTimeline(baseItem, '可转债')
           return baseItem
@@ -379,13 +399,16 @@ Page({
       }
 
       if (!hasRealData) {
-        console.warn('[首页] 真实数据无效，继续使用Mock数据')
+        console.warn('[首页] 真实数据无效，使用Mock兜底')
+        this.loadMockData()
       }
     } catch (err) {
-      console.error('Load data failed, continue using mock data:', err)
+      console.error('Load data failed, using mock data:', err)
+      this.loadMockData()
     } finally {
       this.setData({ loading: false }, () => {
         this.checkIpoReminders()
+        this.fillCalendarEvents()
       })
     }
   },
@@ -414,10 +437,16 @@ Page({
         avg_return: 23.85
       },
       market_sentiment: {
-        sh_score: 58,
-        sz_score: 52,
-        sh_change: 2.3,
-        sz_change: -0.8,
+        sh_price: 3150.28,
+        sh_change: 1.23,
+        sh_change_amount: 38.25,
+        sz_price: 10234.56,
+        sz_change: 0.85,
+        sz_change_amount: 86.32,
+        cyb_price: 2156.78,
+        cyb_change: 2.15,
+        cyb_change_amount: 45.32,
+        sentiment_score: 50,
         sh_volume: 3256,
         sz_volume: 4128,
         sh_up_count: 1820,
@@ -426,9 +455,19 @@ Page({
         sz_down_count: 1680
       },
       fund_flow: {
-        north: 32.56,
-        sh: 18.32,
-        sz: 14.24
+        sectors: [
+          { name: '半导体', flow: 80.68, change_pct: 2.21, leader: '北京君正', leader_change: 20.00 },
+          { name: '证券', flow: 57.78, change_pct: 3.06, leader: '长江证券', leader_change: 9.97 },
+          { name: '元件', flow: 112.24, change_pct: 3.14, leader: '三环集团', leader_change: 12.64 },
+          { name: '白酒', flow: 6.09, change_pct: 1.64, leader: '酒鬼酒', leader_change: 7.20 },
+          { name: '银行', flow: -5.45, change_pct: -0.23, leader: '招商银行', leader_change: 1.20 },
+          { name: '医药', flow: -12.34, change_pct: -0.85, leader: '恒瑞医药', leader_change: 2.10 },
+          { name: '新能源', flow: -25.67, change_pct: -1.25, leader: '宁德时代', leader_change: -0.80 },
+          { name: '消费', flow: -8.90, change_pct: -0.45, leader: '贵州茅台', leader_change: 0.50 },
+          { name: '军工', flow: 3.89, change_pct: 0.80, leader: '中航沈飞', leader_change: 3.20 },
+          { name: '地产', flow: -2.67, change_pct: -0.60, leader: '万科A', leader_change: -1.20 },
+        ],
+        total_count: 10
       }
     }
 
@@ -438,42 +477,40 @@ Page({
     const sentiment = mockOverview.market_sentiment
     const fundFlow = mockOverview.fund_flow
 
-    const shScore = sentiment.sh_score
-    const szScore = sentiment.sz_score
-    const avgScore = (shScore + szScore) / 2
+    const score = typeof sentiment.sentiment_score === 'number' ? sentiment.sentiment_score : 50
     let sentimentLevel = 'neutral'
     let sentimentText = '中性'
-    if (avgScore >= 70) {
+    if (score >= 70) {
       sentimentLevel = 'hot'; sentimentText = '过热'
-    } else if (avgScore >= 60) {
+    } else if (score >= 55) {
       sentimentLevel = 'warm'; sentimentText = '偏热'
-    } else if (avgScore <= 30) {
+    } else if (score <= 25) {
       sentimentLevel = 'cold'; sentimentText = '过冷'
-    } else if (avgScore <= 40) {
+    } else if (score <= 35) {
       sentimentLevel = 'cool'; sentimentText = '偏冷'
     }
 
     const mockSignals = {
       discount: [
-        { '转债名称': '南芯转债', '转债价格': 100.00, '转股溢价率': -18.66 },
-        { '转债名称': '汇车退债', '转债价格': 55.59, '转股溢价率': -7.35 },
-        { '转债名称': '银微转债', '转债价格': 148.44, '转股溢价率': -0.76 },
-        { '转债名称': '鹤21转债', '转债价格': 152.74, '转股溢价率': -0.39 },
-        { '转债名称': '华亚转债', '转债价格': 264.90, '转股溢价率': -0.31 }
+        { bond_name: '南芯转债', price: 100.00, premium_rate: -18.66 },
+        { bond_name: '汇车退债', price: 55.59, premium_rate: -7.35 },
+        { bond_name: '银微转债', price: 148.44, premium_rate: -0.76 },
+        { bond_name: '鹤21转债', price: 152.74, premium_rate: -0.39 },
+        { bond_name: '华亚转债', price: 264.90, premium_rate: -0.31 }
       ],
       double_low: [
-        { '转债名称': '汇车退债', '转债价格': 55.59, '转股溢价率': -7.35 },
-        { '转债名称': '南芯转债', '转债价格': 100.00, '转股溢价率': -18.66 },
-        { '转债名称': '金帝转债', '转债价格': 100.00, '转股溢价率': 1.39 },
-        { '转债名称': '春风转债', '转债价格': 100.00, '转股溢价率': 7.92 },
-        { '转债名称': '弘亚转债', '转债价格': 116.00, '转股溢价率': 8.15 }
+        { bond_name: '汇车退债', price: 55.59, premium_rate: -7.35 },
+        { bond_name: '南芯转债', price: 100.00, premium_rate: -18.66 },
+        { bond_name: '金帝转债', price: 100.00, premium_rate: 1.39 },
+        { bond_name: '春风转债', price: 100.00, premium_rate: 7.92 },
+        { bond_name: '弘亚转债', price: 116.00, premium_rate: 8.15 }
       ],
       force_redeem: [
-        { '转债名称': '艾迪转债', '转债价格': 129.93, '转股溢价率': -0.12 },
-        { '转债名称': '镇洋转债', '转债价格': 130.30, '转股溢价率': 0.48 },
-        { '转债名称': '航新转债', '转债价格': 129.40, '转股溢价率': 2.28 },
-        { '转债名称': '重银转债', '转债价格': 127.61, '转股溢价率': 7.66 },
-        { '转债名称': '常银转债', '转债价格': 129.52, '转股溢价率': 6.08 }
+        { bond_name: '艾迪转债', price: 129.93, premium_rate: -0.12 },
+        { bond_name: '镇洋转债', price: 130.30, premium_rate: 0.48 },
+        { bond_name: '航新转债', price: 129.40, premium_rate: 2.28 },
+        { bond_name: '重银转债', price: 127.61, premium_rate: 7.66 },
+        { bond_name: '常银转债', price: 129.52, premium_rate: 6.08 }
       ]
     }
 
@@ -578,9 +615,6 @@ Page({
       }
     ]
 
-    const formatFlow = (val) => val > 0 ? '+' + val.toFixed(2) : val.toFixed(2)
-    const getFlowTrend = (val) => val >= 0 ? 'positive' : 'negative'
-
     this.signalsData = this.formatSignals(mockSignals)
     this.updateCurrentSignals()
 
@@ -589,14 +623,16 @@ Page({
     this.setData({
       sentimentLevel,
       sentimentText,
-      mergedSentiment: avgScore.toFixed(0),
-      mergedSentimentPercent: avgScore,
-      shSentiment: shScore.toFixed(0),
-      shSentimentTrend: shScore >= 50 ? 'positive' : 'negative',
-      shSentimentPercent: shScore,
-      szSentiment: szScore.toFixed(0),
-      szSentimentTrend: szScore >= 50 ? 'positive' : 'negative',
-      szSentimentPercent: szScore,
+      mergedSentiment: score.toFixed(0),
+      mergedSentimentPercent: score,
+      sentimentFormula: {
+        ratioScore: sentiment.sh_score != null ? sentiment.sh_score.toFixed(1) : '--',
+        volTrendScore: sentiment.vol_trend_score != null ? sentiment.vol_trend_score.toFixed(1) : '--',
+        prevVolume: sentiment.prev_volume != null ? sentiment.prev_volume.toFixed(0) : '--',
+        volumeChangePct: sentiment.volume_change_pct != null ? (sentiment.volume_change_pct > 0 ? '+' : '') + sentiment.volume_change_pct.toFixed(1) : '--',
+        vol5dAvg: sentiment.volume_5d_avg != null ? sentiment.volume_5d_avg.toFixed(0) : '--',
+        vol5dChangePct: sentiment.volume_5d_change_pct != null ? (sentiment.volume_5d_change_pct > 0 ? '+' : '') + sentiment.volume_5d_change_pct.toFixed(1) : '--',
+      },
       sentimentDetail: {
         shVolume: sentiment.sh_volume + '亿',
         szVolume: sentiment.sz_volume + '亿',
@@ -608,12 +644,6 @@ Page({
         totalUpCount: (sentiment.sh_up_count + sentiment.sz_up_count) + '只',
         totalDownCount: (sentiment.sh_down_count + sentiment.sz_down_count) + '只'
       },
-      northFlow: formatFlow(fundFlow.north),
-      northFlowTrend: getFlowTrend(fundFlow.north),
-      shFlow: formatFlow(fundFlow.sh),
-      shFlowTrend: getFlowTrend(fundFlow.sh),
-      szFlow: formatFlow(fundFlow.sz),
-      szFlowTrend: getFlowTrend(fundFlow.sz),
       doubleLowMedian: cb.double_low_median,
       premiumMedian: cb.premium_median,
       bondCount: cb.count,
@@ -630,17 +660,20 @@ Page({
 
   formatSignals(data) {
     const formatItem = (item, typeText) => {
-      const bondName = item['转债名称'] || item.bondName || '--'
-      const bondCode = item['转债代码'] || item.bondCode || '--'
-      const price = typeof item['转债价格'] === 'number' ? item['转债价格'].toFixed(2) : (item.price || '--')
-      const premiumNum = typeof item['转股溢价率'] === 'number' ? item['转股溢价率'] : (item.premiumNum || 0)
-      const premiumRate = typeof item['转股溢价率'] === 'number' ? item['转股溢价率'].toFixed(2) + '%' : (item.premiumRate || '--')
-      const doubleLow = typeof item['双低'] === 'number' ? item['双低'].toFixed(1) : (item.doubleLow || '--')
-      const stockCode = String(item['正股代码'] || item.stockCode || '')
+      const bondName = item.bond_name || '--'
+      const bondCode = item.bond_code || '--'
+      const priceVal = item.price
+      const price = typeof priceVal === 'number' ? priceVal.toFixed(2) : (item.price || '--')
+      const premiumVal = item.premium_rate
+      const premiumNum = typeof premiumVal === 'number' ? premiumVal : (item.premiumNum || 0)
+      const premiumRate = typeof premiumVal === 'number' ? premiumVal.toFixed(2) + '%' : (item.premiumRate || '--')
+      const dlVal = item.double_low
+      const doubleLow = typeof dlVal === 'number' ? dlVal.toFixed(1) : (item.doubleLow || '--')
+      const stockCode = String(item.stock_code || '')
 
       let exchange = ''
-      if (item['交易所'] || item.exchange) {
-        exchange = item['交易所'] || item.exchange
+      if (item.exchange) {
+        exchange = item.exchange === 'sh' ? '沪' : item.exchange === 'sz' ? '深' : item.exchange === 'bj' ? '京' : item.exchange
       } else if (stockCode.startsWith('6') || bondCode.startsWith('11') || bondCode.startsWith('13')) {
         exchange = '沪'
       } else if (stockCode.startsWith('0') || stockCode.startsWith('3') || bondCode.startsWith('12')) {
@@ -729,6 +762,14 @@ Page({
     this.setData({ showSentimentModal: false })
   },
 
+  openFormulaModal() {
+    this.setData({ showFormulaModal: true })
+  },
+
+  closeFormulaModal() {
+    this.setData({ showFormulaModal: false })
+  },
+
   showFundFlowInfo() {
     this.setData({ showFundFlowTip: true })
   },
@@ -739,6 +780,34 @@ Page({
 
   openFundFlowModal() {
     this.setData({ showFundFlowModal: true })
+  },
+
+  initRealSectorData(fundFlow) {
+    const sectors = fundFlow.sectors || []
+    if (sectors.length === 0) return
+
+    const maxAbs = Math.max(...sectors.map(s => Math.abs(s.flow)))
+    const sectorFlowList = sectors.map(s => ({
+      name: s.name,
+      flow: s.flow,
+      flowText: (s.flow > 0 ? '+' : '') + s.flow.toFixed(2),
+      percent: Math.round(Math.abs(s.flow) / maxAbs * 100),
+      trend: s.flow >= 0 ? 'positive' : 'negative',
+      change_pct: s.change_pct || 0,
+      leader: s.leader || '',
+      leader_change: s.leader_change || 0,
+    }))
+
+    const sorted = [...sectorFlowList].sort((a, b) => Math.abs(b.flow) - Math.abs(a.flow))
+    const positive = sectorFlowList.filter(s => s.trend === 'positive').sort((a, b) => b.flow - a.flow)
+    const negative = sectorFlowList.filter(s => s.trend === 'negative').sort((a, b) => a.flow - b.flow)
+
+    this.setData({
+      sectorFlowList,
+      topSectors: sorted.slice(0, 3),
+      positivePyramid: this.buildPyramid(positive),
+      negativePyramid: this.buildPyramid(negative, true)
+    })
   },
 
   initSectorData() {
@@ -869,26 +938,7 @@ Page({
     }
 
     if (timeline.length === 0) {
-      const today = '2026-06-24'
-      if (isBond) {
-        return [
-          { step: '董事会预案', date: '2026-02-01', done: true },
-          { step: '证监会核准', date: '2026-05-01', done: true },
-          { step: '股权登记日', date: '2026-06-15', done: true },
-          { step: '申购日', date: '2026-06-18', done: true },
-          { step: '中签公布', date: '2026-06-24', done: false, current: item.status === '中签公布' },
-          { step: '上市', date: '2026-07-05', done: item.status === '已上市' }
-        ]
-      } else {
-        return [
-          { step: '递表', date: '2026-03-01', done: true },
-          { step: '聆讯通过', date: '2026-04-20', done: true },
-          { step: '招股开始', date: '2026-06-05', done: true },
-          { step: '招股截止', date: '2026-06-26', done: false, current: item.status === '申购中' },
-          { step: '公布中签', date: '2026-07-02', done: item.status !== '申购中' && item.status !== '待申购', current: item.status === '中签公布' },
-          { step: '上市', date: '2026-07-08', done: item.status === '已上市' }
-        ]
-      }
+      return timeline
     }
 
     return timeline
@@ -926,6 +976,7 @@ Page({
     this.saveIpoStatus()
 
     this.setData({ ipoDrawList: list })
+    app.globalData.ipoStatusVersion = (app.globalData.ipoStatusVersion || 0) + 1
 
     if (newSubscribed) {
       wx.showToast({
@@ -955,6 +1006,7 @@ Page({
     this.saveIpoStatus()
 
     this.setData({ ipoDrawList: list })
+    app.globalData.ipoStatusVersion = (app.globalData.ipoStatusVersion || 0) + 1
 
     if (newWon) {
       this.addWinRecord(item)
@@ -998,7 +1050,7 @@ Page({
   checkIpoReminders(options = {}) {
     const { silent = false } = options
     const list = this.data.ipoDrawList
-    const today = '2026-06-26'
+    const today = new Date().toISOString().slice(0, 10)
     const subscribeEndingSoon = []
     const drawToday = []
 
@@ -1144,6 +1196,121 @@ Page({
     } catch (e) {
       console.error('加载中签记录失败', e)
     }
+  },
+
+  initCalendar() {
+    const now = new Date()
+    this.generateCalendar(now.getFullYear(), now.getMonth() + 1)
+  },
+
+  generateCalendar(year, month) {
+    const today = new Date()
+    const todayStr = today.toISOString().slice(0, 10)
+    const firstDay = new Date(year, month - 1, 1)
+    const lastDay = new Date(year, month, 0)
+    const startWeekday = firstDay.getDay()
+    const totalDays = lastDay.getDate()
+
+    const blanks = []
+    for (let i = 0; i < startWeekday; i++) {
+      blanks.push({ day: 0, date: '', events: [], isEmpty: true })
+    }
+
+    const days = []
+    for (let d = 1; d <= totalDays; d++) {
+      const dateStr = year + '-' + String(month).padStart(2, '0') + '-' + String(d).padStart(2, '0')
+      days.push({
+        day: d,
+        date: dateStr,
+        events: [],
+        isEmpty: false,
+        isToday: dateStr === todayStr,
+        isActive: false
+      })
+    }
+
+    const calendarDays = [...blanks, ...days]
+    this.setData({
+      calendarYear: year,
+      calendarMonth: month,
+      calendarMonthLabel: year + '年' + month + '月',
+      calendarDays
+    })
+
+    this.fillCalendarEvents()
+  },
+
+  fillCalendarEvents() {
+    const list = this.data.ipoDrawList || []
+    const days = [...this.data.calendarDays]
+
+    days.forEach(d => {
+      if (d.isEmpty) return
+      d.events = []
+    })
+
+    list.forEach(item => {
+      if (item.apply_end_date) {
+        const dayObj = days.find(d => d.date === item.apply_end_date)
+        if (dayObj) {
+          dayObj.events.push({ type: 'subscribe', name: item.name, code: item.code })
+        }
+      }
+      if (item.draw_date) {
+        const dayObj = days.find(d => d.date === item.draw_date)
+        if (dayObj) {
+          dayObj.events.push({ type: 'draw', name: item.name, code: item.code })
+        }
+      }
+      if (item.list_date) {
+        const dayObj = days.find(d => d.date === item.list_date)
+        if (dayObj) {
+          dayObj.events.push({ type: 'list', name: item.name, code: item.code })
+        }
+      }
+    })
+
+    days.forEach(d => {
+      if (d.isEmpty) return
+      d.hasEvents = d.events.length > 0
+      d.markerTypes = [...new Set(d.events.map(e => e.type))]
+    })
+
+    this.setData({ calendarDays: days })
+  },
+
+  prevMonth() {
+    let { calendarYear, calendarMonth } = this.data
+    calendarMonth--
+    if (calendarMonth < 1) {
+      calendarMonth = 12
+      calendarYear--
+    }
+    this.generateCalendar(calendarYear, calendarMonth)
+  },
+
+  nextMonth() {
+    let { calendarYear, calendarMonth } = this.data
+    calendarMonth++
+    if (calendarMonth > 12) {
+      calendarMonth = 1
+      calendarYear++
+    }
+    this.generateCalendar(calendarYear, calendarMonth)
+  },
+
+  onDayTap(e) {
+    const { index } = e.currentTarget.dataset
+    const day = this.data.calendarDays[index]
+    if (!day || day.isEmpty || !day.hasEvents) return
+    this.setData({
+      selectedDayEvents: day.events,
+      showDayEvents: true
+    })
+  },
+
+  closeDayEvents() {
+    this.setData({ showDayEvents: false, selectedDayEvents: [] })
   },
 
   goToWinRecords() {

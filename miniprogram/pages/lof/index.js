@@ -60,23 +60,23 @@ Page({
       }
 
       const sortedList = list.sort((a, b) => {
-        const pa = a.premium || a['溢价率'] || 0
-        const pb = b.premium || b['溢价率'] || 0
+        const pa = a.premium || 0
+        const pb = b.premium || 0
         return pb - pa
       })
       const formattedList = sortedList.map(item => this.formatLofItem(item))
 
       if (!summary) {
-        const premiums = list.map(item => item.premium || item['溢价率'] || 0)
+        const premiums = list.map(item => item.premium || 0)
         summary = {
           count: list.length,
           premiumAvg: (premiums.reduce((a, b) => a + b, 0) / premiums.length).toFixed(2),
           topPremium: Math.max(...premiums).toFixed(2),
           positiveCount: premiums.filter(p => p > 0).length,
-          pausedCount: list.filter(item => (item.limit_status || item['申购状态']) === '暂停').length
+          pausedCount: list.filter(item => item.limit_status === '暂停').length
         }
       } else {
-        summary.pausedCount = list.filter(item => (item.limit_status || item['申购状态']) === '暂停').length
+        summary.pausedCount = list.filter(item => item.limit_status === '暂停').length
       }
 
       const now = new Date()
@@ -124,18 +124,18 @@ Page({
   },
 
   formatLofItem(item) {
-    const premium = item.premium || item['溢价率'] || 0
-    const price = item.price || item['最新价'] || 0
-    const valuation = item.valuation || item['估值'] || 0
-    const consecutivePremium = item.consecutive_premium || item['连续溢价'] || 0
-    const limitStatus = item.limit_status || item['申购状态'] || '--'
-    const name = item.name || item['名称'] || '--'
-    const code = item.code || item['代码'] || '--'
-    const changePct = item.change_pct || item['涨跌幅'] || 0
+    const premium = item.premium || 0
+    const price = item.price || 0
+    const valuation = item.valuation || 0
+    const consecutivePremium = item.consecutive_premium || 0
+    const limitStatus = item.limit_status || '--'
+    const name = item.name || '--'
+    const code = item.code || '--'
+    const changePct = item.change_pct || 0
 
     let exchange = ''
-    if (item['交易所']) {
-      exchange = item['交易所']
+    if (item.exchange) {
+      exchange = item.exchange === 'sh' ? '沪' : item.exchange === 'sz' ? '深' : item.exchange === 'bj' ? '京' : item.exchange
     } else if (code.startsWith('sh') || code.startsWith('5')) {
       exchange = '沪'
     } else if (code.startsWith('sz') || code.startsWith('1')) {

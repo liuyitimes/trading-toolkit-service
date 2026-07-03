@@ -14,11 +14,28 @@ def safe_float(val, default=0):
 
 
 def get_lof_list():
-    """获取LOF基金列表（含溢价率信息）"""
+    """获取LOF/ETF基金列表（含折溢价率信息）"""
     try:
-        df = ak.fund_lof_spot_em()
+        # fund_lof_spot_em 太慢（分页请求），直接用 fund_etf_spot_em
+        df = None
+        try:
+            df = ak.fund_etf_spot_em()
+        except Exception as e:
+            print(f'获取ETF数据失败: {e}')
+            # 回退到 fund_lof_spot_em
+            try:
+                df = ak.fund_lof_spot_em()
+            except Exception:
+                return []
+
         if df is None or df.empty:
             return []
+
+        # 列名映射
+        has_premium = '溢价率' in df.columns
+        has_discount = '基金折价率' in df.columns
+        has_nav = '基金净值' in df.columns
+        has_iopv = 'IOPV实时估值' in df.columns
 
         result = []
         for _, row in df.iterrows():
@@ -31,14 +48,28 @@ def get_lof_list():
             else:
                 exchange = ''
 
+            # 溢价率：优先用溢价率字段，否则用折价率取反
+            premium = 0
+            if has_premium:
+                premium = safe_float(row.get('溢价率', 0))
+            elif has_discount:
+                premium = -safe_float(row.get('基金折价率', 0))
+
+            # 估值：优先用基金净值，否则用 IOPV
+            valuation = 0
+            if has_nav:
+                valuation = safe_float(row.get('基金净值', 0))
+            elif has_iopv:
+                valuation = safe_float(row.get('IOPV实时估值', 0))
+
             result.append({
                 '代码': code,
                 '名称': str(row.get('名称', '')),
                 '交易所': exchange,
                 '最新价': safe_float(row.get('最新价')),
                 '涨跌幅': safe_float(row.get('涨跌幅')),
-                '估值': safe_float(row.get('基金净值', 0)),
-                '溢价率': safe_float(row.get('溢价率', 0)),
+                '估值': valuation,
+                '溢价率': premium,
                 '连续溢价': int(safe_float(row.get('连续溢价天数', 0))),
                 '申购状态': str(row.get('申购状态', '不限')),
                 '成交量': safe_float(row.get('成交量', 0)),

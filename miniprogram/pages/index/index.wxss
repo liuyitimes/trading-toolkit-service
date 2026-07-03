@@ -683,6 +683,100 @@
   margin-bottom: 20rpx;
 }
 
+.calendar-nav {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.nav-btn {
+  font-size: 36rpx;
+  color: #0969DA;
+  padding: 8rpx 16rpx;
+  font-weight: 700;
+}
+
+.day.has-events {
+  cursor: pointer;
+}
+
+.day-events-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.day-events-panel {
+  background: #FFFFFF;
+  border-radius: 16rpx;
+  width: 80%;
+  max-height: 60vh;
+  overflow: hidden;
+}
+
+.day-events-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 24rpx 32rpx;
+  border-bottom: 1rpx solid #D0D7DE;
+}
+
+.day-events-title {
+  font-size: 30rpx;
+  font-weight: 700;
+  color: #1F2328;
+}
+
+.day-events-close {
+  font-size: 40rpx;
+  color: #818B98;
+  padding: 0 8rpx;
+}
+
+.day-events-list {
+  padding: 16rpx 32rpx;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.day-event-item {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  padding: 16rpx 0;
+  border-bottom: 1rpx solid #F0F0F0;
+}
+
+.day-event-item:last-child { border-bottom: none; }
+
+.event-type-tag {
+  font-size: 20rpx;
+  padding: 4rpx 12rpx;
+  border-radius: 4rpx;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.event-type-tag.subscribe { background: #E3F2FD; color: #1976D2; }
+.event-type-tag.draw { background: #FFF3E0; color: #E65100; }
+.event-type-tag.list { background: #E8F5E9; color: #2E7D32; }
+
+.event-name {
+  font-size: 28rpx;
+  color: #1F2328;
+  flex: 1;
+}
+
+.event-code {
+  font-size: 22rpx;
+  color: #818B98;
+}
+
 .calendar-month {
   font-size: 30rpx;
   font-weight: 600;
@@ -1515,6 +1609,35 @@
   font-family: monospace;
 }
 
+.calc-params {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.calc-param-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16rpx 20rpx;
+  border-bottom: 1rpx solid #F0F0F0;
+}
+
+.calc-param-row:last-child {
+  border-bottom: none;
+}
+
+.calc-param-label {
+  font-size: 26rpx;
+  color: #59636E;
+}
+
+.calc-param-value {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #1F2328;
+}
+
 .detail-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -2300,6 +2423,18 @@
   color: #F0C850;
 }
 
+.dark-mode .calc-param-row {
+  border-bottom-color: #21262D;
+}
+
+.dark-mode .calc-param-label {
+  color: #8B949E;
+}
+
+.dark-mode .calc-param-value {
+  color: #E6EDF3;
+}
+
 .dark-mode .level-text {
   color: #8B949E;
 }
@@ -2415,3 +2550,15 @@
 .dark-mode .bubble-divider {
   background: #30363D;
 }
+
+.dark-mode .nav-btn { color: #58A6FF; }
+.dark-mode .day-events-panel { background: #161B22; }
+.dark-mode .day-events-header { border-color: #30363D; }
+.dark-mode .day-events-title { color: #E6EDF3; }
+.dark-mode .day-events-close { color: #6E7681; }
+.dark-mode .day-event-item { border-color: #21262D; }
+.dark-mode .event-type-tag.subscribe { background: #0D2240; color: #58A6FF; }
+.dark-mode .event-type-tag.draw { background: #3D2E00; color: #D29922; }
+.dark-mode .event-type-tag.list { background: #1A4D2E; color: #3FB950; }
+.dark-mode .event-name { color: #E6EDF3; }
+.dark-mode .event-code { color: #6E7681; }
