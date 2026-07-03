@@ -16,6 +16,10 @@ class BaseDataSource(ABC):
         """获取可转债信号（双低、强赎、折价、下修）"""
 
     @abstractmethod
+    def get_convertible_pending(self) -> list:
+        """获取待发/配售可转债列表（含正股信息和配售数据）"""
+
+    @abstractmethod
     def get_convertible_detail(self, code: str) -> dict:
         """获取单只可转债详情"""
 

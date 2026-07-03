@@ -4,19 +4,6 @@
   background: #F8F7F4;
 }
 
-.mock-tip {
-  background: linear-gradient(135deg, rgba(212, 160, 23, 0.1) 0%, rgba(240, 200, 80, 0.1) 100%);
-  border-bottom: 1rpx solid rgba(212, 160, 23, 0.3);
-  padding: 16rpx 32rpx;
-  text-align: center;
-}
-
-.mock-tip-text {
-  font-size: 24rpx;
-  color: #B8860B;
-  font-weight: 500;
-}
-
 /* ==================== 顶部横幅（名言轮播）==================== */
 .banner {
   position: relative;
@@ -544,6 +531,60 @@
 }
 
 /* ==================== 资金方向 ==================== */
+.net-inflow-bar {
+  padding: 12rpx 24rpx;
+  background: #F6F8FA;
+  margin: 0 24rpx;
+  border-radius: 8rpx;
+  border: 1rpx solid #D0D7DE;
+}
+
+.net-inflow-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.net-inflow-label {
+  font-size: 24rpx;
+  color: #59636E;
+  font-weight: 500;
+}
+
+.net-inflow-value {
+  font-size: 32rpx;
+  font-weight: 700;
+}
+
+.net-inflow-value.positive {
+  color: #CF222E;
+}
+
+.net-inflow-value.negative {
+  color: #1A7F37;
+}
+
+.net-inflow-detail {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  margin-top: 4rpx;
+}
+
+.net-inflow-detail-item {
+  font-size: 20rpx;
+  color: #818B98;
+}
+
+.net-inflow-divider {
+  font-size: 20rpx;
+  color: #D0D7DE;
+}
+
+.hidden {
+  display: none;
+}
+
 .fund-flow-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -1195,6 +1236,52 @@
 .loading-text {
   font-size: 28rpx;
   color: #59636E;
+}
+
+.loading-tip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 16rpx 32rpx;
+  background: rgba(212, 160, 23, 0.95);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12rpx;
+  z-index: 1000;
+  backdrop-filter: blur(10px);
+}
+
+.loading-tip-spinner {
+  width: 28rpx;
+  height: 28rpx;
+  border: 2rpx solid rgba(255,255,255,0.4);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+.loading-tip-text {
+  font-size: 24rpx;
+  color: #fff;
+  font-weight: 500;
+}
+
+.load-error {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 20rpx 32rpx;
+  background: #FFE5E5;
+  text-align: center;
+  z-index: 1000;
+}
+
+.load-error-text {
+  font-size: 26rpx;
+  color: #CF222E;
 }
 
 .section-title-row {

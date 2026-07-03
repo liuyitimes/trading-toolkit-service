@@ -144,6 +144,27 @@
   margin-bottom: 20rpx;
 }
 
+.section-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  margin-bottom: 20rpx;
+}
+
+.section-title-row .section-title {
+  margin-bottom: 0;
+}
+
+.section-badge {
+  font-size: 20rpx;
+  padding: 4rpx 14rpx;
+  border-radius: 20rpx;
+  background: #EBF5FF;
+  color: #0969DA;
+  border: 1rpx solid #58A6FF;
+  font-weight: 500;
+}
+
 /* ==================== 信息网格 ==================== */
 .info-grid {
   display: flex;
@@ -227,6 +248,22 @@
 
 .timeline-node.done .node-step { color: #1A7F37; }
 .timeline-node.current .node-step { color: #0969DA; font-weight: 600; }
+
+.current-tag {
+  font-size: 18rpx;
+  padding: 2rpx 12rpx;
+  border-radius: 10rpx;
+  background: #0969DA;
+  color: #fff;
+  font-weight: 600;
+  margin-top: 4rpx;
+  animation: pulse-tag 2s ease-in-out infinite;
+}
+
+@keyframes pulse-tag {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(1.05); }
+}
 
 /* ==================== 券商孖展 ==================== */
 .margin-summary {
@@ -319,6 +356,9 @@
 .dark-mode .timeline-node.current .node-step { color: #58A6FF; }
 .dark-mode .timeline-node::after { background: #30363D; }
 .dark-mode .timeline-node.done::after { background: #238636; }
+
+.dark-mode .section-badge { background: #0D2240; color: #58A6FF; border-color: #58A6FF; }
+.dark-mode .current-tag { background: #58A6FF; color: #fff; }
 
 .dark-mode .margin-summary { border-color: #30363D; }
 .dark-mode .margin-sum-label { color: #6E7681; }

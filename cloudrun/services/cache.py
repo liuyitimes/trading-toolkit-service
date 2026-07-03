@@ -24,6 +24,7 @@ CACHE_TTL_CONFIG = {
     'hk_ipo_upcoming': 1800,
     'hk_ipo_summary': 1800,
     'convertible_detail': 43200,
+    'convertible_pending': 1800,
     'stock_profile': 86400,
 }
 
@@ -242,3 +243,132 @@ def get_with_cache_lock(cache_key: str, fetch_func, ttl: int):
         if data is not None:
             cache.set(cache_key, data, ttl)
         return data
+
+
+# ==================== 后台异步刷新（SWR: stale-while-revalidate） ====================
+
+_refresh_threads: dict = {}
+_refresh_lock = threading.Lock()
+
+
+def get_with_swr(cache_key: str, fetch_func, ttl: int, revalidate_ratio: float = 0.7):
+    """Stale-While-Revalidate 模式：
+    - 有缓存直接返回（即使过期）
+    - 后台异步刷新缓存
+    - 无缓存时同步获取
+
+    Args:
+        cache_key: 缓存键
+        fetch_func: 回源函数
+        ttl: 缓存 TTL（秒）
+        revalidate_ratio: 剩余时间低于此比例时触发后台刷新（0.7 = 剩余70%时开始刷新）
+    """
+    cache = get_cache_manager()
+
+    # 先尝试读缓存
+    cached = cache.get(cache_key)
+
+    if cached is not None:
+        # 有缓存，检查是否需要后台刷新
+        _maybe_trigger_background_refresh(cache_key, fetch_func, ttl, revalidate_ratio)
+        return cached
+
+    # 无缓存，同步获取
+    lock = _get_lock(cache_key)
+    with lock:
+        # 双重检查
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        data = fetch_func()
+        if data is not None:
+            cache.set(cache_key, data, ttl)
+        return data
+
+
+def _maybe_trigger_background_refresh(cache_key: str, fetch_func, ttl: int, revalidate_ratio: float):
+    """检查是否需要触发后台刷新"""
+    # 简化实现：用一个标记键记录下次刷新时间
+    cache = get_cache_manager()
+    refresh_key = f'{cache_key}:_next_refresh'
+
+    try:
+        next_refresh = cache.get(refresh_key)
+    except Exception:
+        next_refresh = None
+
+    now = time.time()
+
+    if next_refresh is None or float(next_refresh) <= now:
+        # 需要刷新
+        with _refresh_lock:
+            if cache_key not in _refresh_threads or not _refresh_threads[cache_key].is_alive():
+                # 启动后台刷新线程
+                t = threading.Thread(
+                    target=_background_refresh_worker,
+                    args=(cache_key, fetch_func, ttl, refresh_key, revalidate_ratio),
+                    daemon=True
+                )
+                _refresh_threads[cache_key] = t
+                t.start()
+
+
+def _background_refresh_worker(cache_key: str, fetch_func, ttl: int, refresh_key: str, revalidate_ratio: float):
+    """后台刷新工作线程"""
+    try:
+        cache = get_cache_manager()
+        data = fetch_func()
+        if data is not None:
+            cache.set(cache_key, data, ttl)
+            # 设置下次刷新时间：TTL * revalidate_ratio 后刷新
+            next_refresh = time.time() + ttl * revalidate_ratio
+            cache.set(refresh_key, str(next_refresh), ttl)
+    except Exception as e:
+        print(f'[CacheSWR] 后台刷新失败 {cache_key}: {e}')
+
+
+# ==================== 缓存预热 ====================
+
+def warmup_cache(items: list):
+    """预热缓存
+
+    Args:
+        items: [(data_type, method_name, factory), ...] 列表
+    """
+    print('[CacheWarmup] 开始预热缓存...')
+
+    def _warmup_item(data_type, fetch_func):
+        try:
+            cache_key = build_cache_key(data_type.replace('_', ':'), 'data')
+            ttl = get_cache_ttl(data_type)
+            cache = get_cache_manager()
+
+            # 已有缓存则跳过
+            if cache.get(cache_key) is not None:
+                print(f'[CacheWarmup] {data_type}: 已有缓存，跳过')
+                return
+
+            print(f'[CacheWarmup] {data_type}: 开始加载...')
+            start = time.time()
+            data = fetch_func()
+            if data is not None:
+                cache.set(cache_key, data, ttl)
+                elapsed = time.time() - start
+                print(f'[CacheWarmup] {data_type}: 加载完成，耗时 {elapsed:.1f}s')
+            else:
+                print(f'[CacheWarmup] {data_type}: 数据为空')
+        except Exception as e:
+            print(f'[CacheWarmup] {data_type}: 预热失败 - {e}')
+
+    threads = []
+    for data_type, fetch_func in items:
+        t = threading.Thread(target=_warmup_item, args=(data_type, fetch_func), daemon=True)
+        threads.append(t)
+        t.start()
+
+    # 等待所有预热完成（或超时）
+    for t in threads:
+        t.join(timeout=120)
+
+    print('[CacheWarmup] 缓存预热完成')

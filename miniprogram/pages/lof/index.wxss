@@ -97,21 +97,21 @@
 
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12rpx;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8rpx;
 }
 
 .summary-item {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 16rpx 8rpx;
+  padding: 12rpx 4rpx;
   background: #F6F8FA;
   border-radius: 8rpx;
 }
 
 .summary-value {
-  font-size: 30rpx;
+  font-size: 28rpx;
   font-weight: 700;
   color: #1F2328;
   line-height: 1.2;
@@ -121,10 +121,18 @@
   color: #CF222E;
 }
 
+.summary-value.arbitrage {
+  color: #1A7F37;
+}
+
+.summary-value.warn {
+  color: #9A6700;
+}
+
 .summary-label {
-  font-size: 20rpx;
+  font-size: 18rpx;
   color: #818B98;
-  margin-top: 6rpx;
+  margin-top: 4rpx;
 }
 
 /* ==================== 投资指引 ==================== */
@@ -207,22 +215,32 @@
 }
 
 .col-price {
-  flex: 1.8;
+  flex: 1.5;
   display: flex;
   flex-direction: column;
   align-items: center;
 }
 
 .col-premium {
+  flex: 1.5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.col-volume {
   flex: 1.2;
   display: flex;
   justify-content: center;
 }
 
-.col-days {
-  flex: 1;
+.col-tags {
+  flex: 1.5;
   display: flex;
-  justify-content: center;
+  flex-wrap: wrap;
+  gap: 4rpx;
+  padding-right: 12rpx;
+  justify-content: flex-end;
 }
 
 /* ==================== 名称行 ==================== */
@@ -245,21 +263,10 @@
   flex-shrink: 0;
 }
 
-.exchange-icon.sh {
-  background: #CF222E;
-}
-
-.exchange-icon.sz {
-  background: #1A7F37;
-}
-
-.exchange-icon.bj {
-  background: #8250DF;
-}
-
-.exchange-icon.hk {
-  background: #0969DA;
-}
+.exchange-icon.sh { background: #CF222E; }
+.exchange-icon.sz { background: #1A7F37; }
+.exchange-icon.bj { background: #8250DF; }
+.exchange-icon.hk { background: #0969DA; }
 
 .fund-name {
   font-size: 26rpx;
@@ -271,7 +278,8 @@
 .code-row {
   display: flex;
   align-items: center;
-  gap: 8rpx;
+  gap: 6rpx;
+  flex-wrap: wrap;
 }
 
 .fund-code {
@@ -288,10 +296,20 @@
   font-weight: 500;
 }
 
-.fund-limit.paused {
-  background: #FFEBE9;
-  color: #CF222E;
+.fund-limit.paused { background: #FFEBE9; color: #CF222E; }
+.fund-limit.limited { background: #FFF8E5; color: #9A6700; border: 1rpx solid #D4A72C; }
+
+/* ==================== 成交额标签(行内) ==================== */
+.amount-tag {
+  font-size: 18rpx;
+  padding: 1rpx 8rpx;
+  border-radius: 4rpx;
+  font-weight: 500;
 }
+
+.amount-tag.safe { background: #DAFBE1; color: #1A7F37; }
+.amount-tag.warn { background: #FFF8E5; color: #9A6700; }
+.amount-tag.danger { background: #FFEBE9; color: #CF222E; }
 
 /* ==================== 价格信息 ==================== */
 .price-main {
@@ -301,27 +319,76 @@
   margin-bottom: 4rpx;
 }
 
+.price-main.positive { color: #CF222E; }
+.price-main.negative { color: #1A7F37; }
+
 .price-sub {
   font-size: 22rpx;
   color: #818B98;
 }
+
+.price-sub.positive { color: #CF222E; }
+.price-sub.negative { color: #1A7F37; }
 
 /* ==================== 溢价率 ==================== */
 .premium-value {
   font-size: 28rpx;
   font-weight: 600;
   color: #1A7F37;
+  display: block;
+  text-align: center;
 }
 
-.premium-value.high {
-  color: #CF222E;
+.premium-value.high { color: #CF222E; }
+
+.premium-sub {
+  display: block;
+  font-size: 18rpx;
+  color: #818B98;
+  text-align: center;
+  margin-top: 2rpx;
 }
 
-/* ==================== 天数 ==================== */
-.days-value {
+.premium-sub.high { color: #CF222E; font-weight: 600; }
+.premium-sub.negative { color: #1A7F37; }
+
+/* ==================== 成交额列 ==================== */
+.volume-value {
   font-size: 24rpx;
+  font-weight: 600;
   color: #1F2328;
-  font-weight: 500;
+  font-family: monospace;
+}
+
+.volume-value.safe { color: #1A7F37; }
+.volume-value.warn { color: #9A6700; }
+.volume-value.danger { color: #CF222E; }
+
+/* ==================== 标记列 ==================== */
+.tag {
+  font-size: 18rpx;
+  padding: 2rpx 10rpx;
+  border-radius: 8rpx;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.tag-arbitrage {
+  background: #DAFBE1;
+  color: #1A7F37;
+  border: 1rpx solid #4AC26B;
+}
+
+.tag-sustained {
+  background: #EBF5FF;
+  color: #0969DA;
+  border: 1rpx solid #58A6FF;
+}
+
+.tag-warning {
+  background: #FFF8E5;
+  color: #9A6700;
+  border: 1rpx solid #D4A72C;
 }
 
 /* ==================== 空状态 ==================== */
@@ -360,140 +427,186 @@
   color: #59636E;
 }
 
+/* ==================== Tab分类 ==================== */
+.signal-stats {
+  display: flex;
+  gap: 12rpx;
+  padding: 16rpx 20rpx;
+  background: #FFFFFF;
+  border-bottom: 1rpx solid #D0D7DE;
+  overflow-x: auto;
+}
+
+.stat-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12rpx 8rpx;
+  border-radius: 8rpx;
+  background: #F6F8FA;
+  border: 1rpx solid transparent;
+  min-width: 60rpx;
+}
+
+.stat-item.active {
+  background: #EBF5FF;
+  border-color: #58A6FF;
+}
+
+.stat-value {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: #1F2328;
+}
+
+.stat-value.highlight { color: #CF222E; }
+
+.stat-label {
+  font-size: 20rpx;
+  color: #818B98;
+  margin-top: 4rpx;
+}
+
+.stat-item.active .stat-label {
+  color: #0969DA;
+  font-weight: 600;
+}
+
+/* ==================== 详情弹窗 ==================== */
+.lof-modal .modal-body {
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.lof-modal .detail-section {
+  margin-bottom: 20rpx;
+}
+
+.lof-modal .detail-section-title {
+  font-size: 26rpx;
+  font-weight: 700;
+  color: #1F2328;
+  display: block;
+  margin-bottom: 12rpx;
+  padding-bottom: 8rpx;
+  border-bottom: 1rpx solid #D0D7DE;
+}
+
+.lof-modal .detail-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+}
+
+.lof-modal .detail-item {
+  width: 50%;
+  padding: 8rpx 0;
+  box-sizing: border-box;
+}
+
+.lof-modal .detail-item.highlight-box {
+  background: #FFF8C5;
+  border-radius: 6rpx;
+  padding: 8rpx 12rpx;
+  width: 50%;
+  margin-bottom: 6rpx;
+}
+
+.lof-modal .detail-label {
+  font-size: 22rpx;
+  color: #818B98;
+  display: block;
+  margin-bottom: 2rpx;
+}
+
+.lof-modal .detail-value {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #1F2328;
+}
+
+.lof-modal .detail-value.highlight { color: #D4A017; }
+
+.advice-box {
+  background: #F0FFF0;
+  border: 1rpx solid #4AC26B;
+  border-radius: 8rpx;
+  padding: 16rpx;
+}
+
+.advice-text {
+  font-size: 24rpx;
+  color: #1F2328;
+  line-height: 1.6;
+}
+
 /* ==================== 暗夜模式覆盖 ==================== */
-.dark-mode .container {
-  background: #0D1117;
-}
+.dark-mode .container { background: #0D1117; }
+.dark-mode .search-bar { background: #161B22; border-color: #30363D; }
+.dark-mode .page-title { color: #E6EDF3; }
+.dark-mode .search-input { background: #0D1117; color: #E6EDF3; }
+.dark-mode .search-cancel { color: #58A6FF; }
+.dark-mode .fav-icon { color: #30363D; }
+.dark-mode .fav-icon.active { color: #D29922; }
+.dark-mode .market-summary { background: #161B22; border-color: #30363D; }
+.dark-mode .summary-title { color: #E6EDF3; }
+.dark-mode .summary-time { color: #6E7681; }
+.dark-mode .summary-item { background: #0D1117; }
+.dark-mode .summary-value { color: #E6EDF3; }
+.dark-mode .summary-value.highlight { color: #F85149; }
+.dark-mode .summary-value.arbitrage { color: #3FB950; }
+.dark-mode .summary-value.warn { color: #D29922; }
+.dark-mode .summary-label { color: #8B949E; }
+.dark-mode .guide-item { background: #3D2E00; border-color: #9E6A03; }
+.dark-mode .guide-text { color: #E6EDF3; }
+.dark-mode .table { background: #161B22; border-color: #30363D; }
+.dark-mode .table-header { background: #0D1117; border-color: #30363D; }
+.dark-mode .table-header text { color: #8B949E; }
+.dark-mode .table-row { border-color: #21262D; }
+.dark-mode .table-row.highlight { background: #4D1F1F; }
+.dark-mode .fund-name { color: #E6EDF3; }
+.dark-mode .fund-code { color: #8B949E; }
+.dark-mode .fund-limit { background: #1A4D2E; color: #3FB950; }
+.dark-mode .fund-limit.paused { background: #4D1F1F; color: #F85149; }
+.dark-mode .fund-limit.limited { background: #3D2E00; color: #D29922; }
+.dark-mode .amount-tag.safe { background: #1A4D2E; color: #3FB950; }
+.dark-mode .amount-tag.warn { background: #3D2E00; color: #D29922; }
+.dark-mode .amount-tag.danger { background: #4D1F1F; color: #F85149; }
+.dark-mode .price-main { color: #E6EDF3; }
+.dark-mode .price-main.positive { color: #F85149; }
+.dark-mode .price-main.negative { color: #3FB950; }
+.dark-mode .price-sub { color: #6E7681; }
+.dark-mode .price-sub.positive { color: #F85149; }
+.dark-mode .price-sub.negative { color: #3FB950; }
+.dark-mode .premium-value { color: #3FB950; }
+.dark-mode .premium-value.high { color: #F85149; }
+.dark-mode .premium-sub { color: #6E7681; }
+.dark-mode .premium-sub.high { color: #F85149; }
+.dark-mode .premium-sub.negative { color: #3FB950; }
+.dark-mode .volume-value { color: #E6EDF3; }
+.dark-mode .volume-value.safe { color: #3FB950; }
+.dark-mode .volume-value.warn { color: #D29922; }
+.dark-mode .volume-value.danger { color: #F85149; }
+.dark-mode .tag-arbitrage { background: #1A4D2E; color: #3FB950; border-color: #238636; }
+.dark-mode .tag-sustained { background: #0D2240; color: #58A6FF; border-color: #58A6FF; }
+.dark-mode .tag-warning { background: #3D2E00; color: #D29922; border-color: #9E6A03; }
+.dark-mode .signal-stats { background: #161B22; border-color: #30363D; }
+.dark-mode .stat-item { background: #0D1117; }
+.dark-mode .stat-item.active { background: #0D2240; border-color: #58A6FF; }
+.dark-mode .stat-value { color: #E6EDF3; }
+.dark-mode .stat-value.highlight { color: #F85149; }
+.dark-mode .stat-label { color: #8B949E; }
+.dark-mode .stat-item.active .stat-label { color: #58A6FF; }
+.dark-mode .loading { background: #0D1117; }
+.dark-mode .loading-spinner { border-color: #30363D; border-top-color: #58A6FF; }
+.dark-mode .loading-text { color: #8B949E; }
 
-.dark-mode .search-bar {
-  background: #161B22;
-  border-color: #30363D;
-}
-
-.dark-mode .page-title {
-  color: #E6EDF3;
-}
-
-.dark-mode .search-input {
-  background: #0D1117;
-  color: #E6EDF3;
-}
-
-.dark-mode .search-cancel {
-  color: #58A6FF;
-}
-
-.dark-mode .fav-icon {
-  color: #30363D;
-}
-
-.dark-mode .fav-icon.active {
-  color: #D29922;
-}
-
-.dark-mode .market-summary {
-  background: #161B22;
-  border-color: #30363D;
-}
-
-.dark-mode .summary-title {
-  color: #E6EDF3;
-}
-
-.dark-mode .summary-time {
-  color: #6E7681;
-}
-
-.dark-mode .summary-item {
-  background: #0D1117;
-}
-
-.dark-mode .summary-value {
-  color: #E6EDF3;
-}
-
-.dark-mode .summary-label {
-  color: #8B949E;
-}
-
-.dark-mode .guide-item {
-  background: #3D2E00;
-  border-color: #9E6A03;
-}
-
-.dark-mode .guide-text {
-  color: #E6EDF3;
-}
-
-.dark-mode .table {
-  background: #161B22;
-  border-color: #30363D;
-}
-
-.dark-mode .table-header {
-  background: #0D1117;
-  border-color: #30363D;
-}
-
-.dark-mode .table-header text {
-  color: #8B949E;
-}
-
-.dark-mode .table-row {
-  border-color: #21262D;
-}
-
-.dark-mode .table-row.highlight {
-  background: #4D1F1F;
-}
-
-.dark-mode .fund-name {
-  color: #E6EDF3;
-}
-
-.dark-mode .fund-code {
-  color: #8B949E;
-}
-
-.dark-mode .fund-limit {
-  background: #1A4D2E;
-  color: #3FB950;
-}
-
-.dark-mode .fund-limit.paused {
-  background: #4D1F1F;
-  color: #F85149;
-}
-
-.dark-mode .price-main {
-  color: #E6EDF3;
-}
-
-.dark-mode .price-sub {
-  color: #6E7681;
-}
-
-.dark-mode .premium-value {
-  color: #3FB950;
-}
-
-.dark-mode .premium-value.high {
-  color: #F85149;
-}
-
-.dark-mode .days-value {
-  color: #E6EDF3;
-}
-
-.dark-mode .loading {
-  background: #0D1117;
-}
-
-.dark-mode .loading-spinner {
-  border-color: #30363D;
-  border-top-color: #58A6FF;
-}
-
-.dark-mode .loading-text {
-  color: #8B949E;
-}
+/* 弹窗暗夜模式 */
+.dark-mode .lof-modal .detail-section-title { color: #E6EDF3; border-color: #30363D; }
+.dark-mode .lof-modal .detail-label { color: #6E7681; }
+.dark-mode .lof-modal .detail-value { color: #E6EDF3; }
+.dark-mode .lof-modal .detail-value.highlight { color: #F0C850; }
+.dark-mode .lof-modal .detail-item.highlight-box { background: #3D2E00; }
+.dark-mode .advice-box { background: #1A4D2E; border-color: #238636; }
+.dark-mode .advice-text { color: #E6EDF3; }

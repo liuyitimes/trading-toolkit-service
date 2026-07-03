@@ -134,6 +134,7 @@ Page({
       marginMultiple: marginMultiple ? marginMultiple + '倍' : '--',
       timeline,
       hasTimeline: timeline.length > 0,
+      currentTimelineIdx: timeline.findIndex(t => t.current),
       hasMargin: marginList.length > 0,
       hasDark: darkPrice != null,
       hasOversub: oversubscription != null,

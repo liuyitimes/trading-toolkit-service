@@ -56,7 +56,13 @@ Component({
     switchTab(e) {
       const data = e.currentTarget.dataset;
       const url = data.path;
-      wx.switchTab({ url });
+      console.time('tab-switch');
+      wx.switchTab({
+        url,
+        complete: () => {
+          setTimeout(() => console.timeEnd('tab-switch'), 100);
+        }
+      });
     }
   }
 });

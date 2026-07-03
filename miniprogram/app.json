@@ -8,7 +8,8 @@
     "pages/setting/index",
     "pages/bondDetail/index",
     "pages/test/index",
-    "pages/quoteManage/index"
+    "pages/quoteManage/index",
+    "pages/apiLog/index"
   ],
   "window": {
     "backgroundColor": "#F8F7F4",

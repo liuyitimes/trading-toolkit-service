@@ -124,6 +124,10 @@ Page({
     wx.navigateTo({ url: '/pages/quoteManage/index' })
   },
 
+  goToApiLog() {
+    wx.navigateTo({ url: '/pages/apiLog/index' })
+  },
+
   setTheme(e) {
     const theme = e.currentTarget.dataset.theme
     if (!theme) return

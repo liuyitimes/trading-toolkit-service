@@ -2,7 +2,8 @@
 .container {
   min-height: 100vh;
   background: #F6F8FA;
-  padding-bottom: env(safe-area-inset-bottom);
+  /* 留出自定义 tabBar 高度（110rpx）+ 安全区，避免底部内容被遮挡无法点击 */
+  padding-bottom: calc(140rpx + env(safe-area-inset-bottom));
 }
 
 /* ==================== 页面标题 ==================== */

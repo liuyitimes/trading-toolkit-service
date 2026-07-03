@@ -35,7 +35,8 @@ Page({
       szDownCount: '--',
       totalVolume: '--',
       totalUpCount: '--',
-      totalDownCount: '--'
+      totalDownCount: '--',
+      bjVolume: '--'
     },
     showSentimentModal: false,
     showFormulaModal: false,
@@ -44,6 +45,7 @@ Page({
     fundFlowChartType: 'treemap',
     sectorFlowList: [],
     topSectors: [],
+    fundFlowNet: null,
     positivePyramid: [],
     negativePyramid: [],
     doubleLowMedian: '--',
@@ -57,8 +59,9 @@ Page({
     ipoDrawCount: 0,
     ipoDrawList: [],
     currentSignals: [],
-    isMock: false,
     loadError: null,
+    loadProgress: '',
+    overviewLoaded: false,
     showIpoDetailModal: false,
     selectedIpo: null,
     lotteryTargetIndex: 0,
@@ -117,20 +120,18 @@ Page({
       this.getTabBar().checkDarkMode()
       this.getTabBar().setData({ selected: 0 })
     }
-    this.checkStateUpdates()
+    if (app.globalData && (app.globalData.favoriteVersion || 0) > (this._lastFavVer || 0)) {
+      this._lastFavVer = app.globalData.favoriteVersion
+      this.loadData()
+    }
+    if (app.globalData && (app.globalData.ipoStatusVersion || 0) > (this._lastIpoVer || 0)) {
+      this._lastIpoVer = app.globalData.ipoStatusVersion
+      this.loadIpoStatus()
+    }
   },
 
-  checkStateUpdates() {
-    const gData = app.globalData || {}
-    const currentFavVer = gData._lastFavVersion || 0
-    const currentIpoVer = gData._lastIpoVersion || 0
-    if ((gData.favoriteVersion || 0) > currentFavVer) {
-      gData._lastFavVersion = gData.favoriteVersion
-    }
-    if ((gData.ipoStatusVersion || 0) > currentIpoVer) {
-      gData._lastIpoVersion = gData.ipoStatusVersion
-    }
-  },
+  _lastFavVer: 0,
+  _lastIpoVer: 0,
 
   clearTimers() {
     if (this.quoteTimer) {
@@ -236,17 +237,25 @@ Page({
   },
 
   async loadData() {
-    this.setData({ loading: true, loadError: null })
+    this.setData({ loadError: null, loadProgress: '正在加载市场数据...' })
     let hasRealData = false
+    let overviewLoaded = false
+
+    const loadTimeout = setTimeout(() => {
+      if (!overviewLoaded) {
+        this.setData({ loadProgress: '数据加载中，请稍候（首次加载可能需要30-60秒）...' })
+      }
+    }, 5000)
+
     try {
-      // 先发起所有请求，overview 到达后立即渲染首屏
       const overviewPromise = callMarketSafe('overview')
       const signalsPromise = callMarketSafe('convertibleSignals')
       const hkipoPromise = callMarketSafe('hkipoList')
       const convertiblePromise = callMarketSafe('convertibleList')
 
-      // overview 最关键，到达即渲染
       const overview = await overviewPromise
+      overviewLoaded = true
+      clearTimeout(loadTimeout)
 
       const isValidOverview = (data) => {
         if (!data || typeof data !== 'object') return false
@@ -299,9 +308,10 @@ Page({
             shDownCount: sentiment.sh_down_count != null ? sentiment.sh_down_count + '只' : '--',
             szUpCount: sentiment.sz_up_count != null ? sentiment.sz_up_count + '只' : '--',
             szDownCount: sentiment.sz_down_count != null ? sentiment.sz_down_count + '只' : '--',
-            totalVolume: (sentiment.sh_volume != null && sentiment.sz_volume != null) ? (sentiment.sh_volume + sentiment.sz_volume).toFixed(0) + '亿' : '--',
+            totalVolume: sentiment.total_volume != null ? sentiment.total_volume.toFixed(0) + '亿' : '--',
             totalUpCount: (sentiment.sh_up_count != null && sentiment.sz_up_count != null) ? (sentiment.sh_up_count + sentiment.sz_up_count) + '只' : '--',
-            totalDownCount: (sentiment.sh_down_count != null && sentiment.sz_down_count != null) ? (sentiment.sh_down_count + sentiment.sz_down_count) + '只' : '--'
+            totalDownCount: (sentiment.sh_down_count != null && sentiment.sz_down_count != null) ? (sentiment.sh_down_count + sentiment.sz_down_count) + '只' : '--',
+            bjVolume: sentiment.bj_volume != null ? sentiment.bj_volume + '亿' : '--',
           },
           doubleLowMedian: cb.double_low_median || '--',
           premiumMedian: cb.premium_median !== undefined ? cb.premium_median : '--',
@@ -311,17 +321,29 @@ Page({
           priceMedian: cb.price_median || '--',
           lofPremiumAvg: lof.premium_avg !== undefined ? lof.premium_avg : '--',
           ipoAvgReturn: ipo.avg_return !== undefined ? ipo.avg_return : '--',
-          isMock: false
+          loadProgress: '',
+          overviewLoaded: true,
         })
 
         if (fundFlow && fundFlow.sectors && fundFlow.sectors.length > 0) {
           this.initRealSectorData(fundFlow)
         }
+        // 大盘资金净流入
+        if (fundFlow && fundFlow.net_inflow != null) {
+          this.setData({
+            fundFlowNet: {
+              netInflow: fundFlow.net_inflow,
+              totalInflow: fundFlow.total_inflow,
+              totalOutflow: fundFlow.total_outflow,
+              netInflowText: (fundFlow.net_inflow > 0 ? '+' : '') + fundFlow.net_inflow.toFixed(2),
+              netTrend: fundFlow.net_inflow >= 0 ? 'positive' : 'negative'
+            }
+          })
+        }
 
         hasRealData = true
       }
 
-      // 其余数据到达后追加渲染
       const signals = await signalsPromise
       const hkipoList = await hkipoPromise
       const convertibleList = await convertiblePromise
@@ -362,7 +384,6 @@ Page({
       if (isValidIpoList(convertibleList)) {
         const today = new Date().toISOString().slice(0, 10)
         const newBonds = convertibleList.filter(b => {
-          // 支持中文 key 和英文 snake_case key
           const price = b['转债价格'] || b.price
           return price && price <= 100.5 && price >= 99.5
         }).slice(0, 3).map(b => {
@@ -399,263 +420,19 @@ Page({
       }
 
       if (!hasRealData) {
-        console.warn('[首页] 真实数据无效，使用Mock兜底')
-        this.loadMockData()
+        console.error('[首页] 真实数据全部无效')
+        this.setData({ loadError: '数据源异常，请稍后重试', loadProgress: '' })
       }
     } catch (err) {
-      console.error('Load data failed, using mock data:', err)
-      this.loadMockData()
+      console.error('Load data failed:', err)
+      clearTimeout(loadTimeout)
+      this.setData({ loadError: '网络异常，请稍后重试', loadProgress: '' })
     } finally {
-      this.setData({ loading: false }, () => {
+      this.setData({ loading: false, overviewLoaded: true }, () => {
         this.checkIpoReminders()
         this.fillCalendarEvents()
       })
     }
-  },
-
-  loadMockData() {
-    console.warn('[首页] 使用Mock兜底数据')
-    const mockOverview = {
-      convertible_bond: {
-        count: 18,
-        price_median: 129.40,
-        premium_median: 5.25,
-        double_low_median: 133.5,
-        market_status: '合理，可适当关注'
-      },
-      lof_fund: {
-        count: 10,
-        premium_avg: 5.37,
-        top_premium: 15.67,
-        positive_count: 10,
-        positive_rate: 100.0,
-        paused_count: 3
-      },
-      hk_ipo: {
-        upcoming_count: 2,
-        recent_count: 2,
-        avg_return: 23.85
-      },
-      market_sentiment: {
-        sh_price: 3150.28,
-        sh_change: 1.23,
-        sh_change_amount: 38.25,
-        sz_price: 10234.56,
-        sz_change: 0.85,
-        sz_change_amount: 86.32,
-        cyb_price: 2156.78,
-        cyb_change: 2.15,
-        cyb_change_amount: 45.32,
-        sentiment_score: 50,
-        sh_volume: 3256,
-        sz_volume: 4128,
-        sh_up_count: 1820,
-        sh_down_count: 1240,
-        sz_up_count: 2150,
-        sz_down_count: 1680
-      },
-      fund_flow: {
-        sectors: [
-          { name: '半导体', flow: 80.68, change_pct: 2.21, leader: '北京君正', leader_change: 20.00 },
-          { name: '证券', flow: 57.78, change_pct: 3.06, leader: '长江证券', leader_change: 9.97 },
-          { name: '元件', flow: 112.24, change_pct: 3.14, leader: '三环集团', leader_change: 12.64 },
-          { name: '白酒', flow: 6.09, change_pct: 1.64, leader: '酒鬼酒', leader_change: 7.20 },
-          { name: '银行', flow: -5.45, change_pct: -0.23, leader: '招商银行', leader_change: 1.20 },
-          { name: '医药', flow: -12.34, change_pct: -0.85, leader: '恒瑞医药', leader_change: 2.10 },
-          { name: '新能源', flow: -25.67, change_pct: -1.25, leader: '宁德时代', leader_change: -0.80 },
-          { name: '消费', flow: -8.90, change_pct: -0.45, leader: '贵州茅台', leader_change: 0.50 },
-          { name: '军工', flow: 3.89, change_pct: 0.80, leader: '中航沈飞', leader_change: 3.20 },
-          { name: '地产', flow: -2.67, change_pct: -0.60, leader: '万科A', leader_change: -1.20 },
-        ],
-        total_count: 10
-      }
-    }
-
-    const cb = mockOverview.convertible_bond
-    const lof = mockOverview.lof_fund
-    const ipo = mockOverview.hk_ipo
-    const sentiment = mockOverview.market_sentiment
-    const fundFlow = mockOverview.fund_flow
-
-    const score = typeof sentiment.sentiment_score === 'number' ? sentiment.sentiment_score : 50
-    let sentimentLevel = 'neutral'
-    let sentimentText = '中性'
-    if (score >= 70) {
-      sentimentLevel = 'hot'; sentimentText = '过热'
-    } else if (score >= 55) {
-      sentimentLevel = 'warm'; sentimentText = '偏热'
-    } else if (score <= 25) {
-      sentimentLevel = 'cold'; sentimentText = '过冷'
-    } else if (score <= 35) {
-      sentimentLevel = 'cool'; sentimentText = '偏冷'
-    }
-
-    const mockSignals = {
-      discount: [
-        { bond_name: '南芯转债', price: 100.00, premium_rate: -18.66 },
-        { bond_name: '汇车退债', price: 55.59, premium_rate: -7.35 },
-        { bond_name: '银微转债', price: 148.44, premium_rate: -0.76 },
-        { bond_name: '鹤21转债', price: 152.74, premium_rate: -0.39 },
-        { bond_name: '华亚转债', price: 264.90, premium_rate: -0.31 }
-      ],
-      double_low: [
-        { bond_name: '汇车退债', price: 55.59, premium_rate: -7.35 },
-        { bond_name: '南芯转债', price: 100.00, premium_rate: -18.66 },
-        { bond_name: '金帝转债', price: 100.00, premium_rate: 1.39 },
-        { bond_name: '春风转债', price: 100.00, premium_rate: 7.92 },
-        { bond_name: '弘亚转债', price: 116.00, premium_rate: 8.15 }
-      ],
-      force_redeem: [
-        { bond_name: '艾迪转债', price: 129.93, premium_rate: -0.12 },
-        { bond_name: '镇洋转债', price: 130.30, premium_rate: 0.48 },
-        { bond_name: '航新转债', price: 129.40, premium_rate: 2.28 },
-        { bond_name: '重银转债', price: 127.61, premium_rate: 7.66 },
-        { bond_name: '常银转债', price: 129.52, premium_rate: 6.08 }
-      ]
-    }
-
-    const mockIpo = [
-      { 
-        code: '02611', name: '趣致集团', ipo_price: 15.80, 
-        status: '申购中', win_rate: 15.2,
-        apply_end_date: '2026-06-26', draw_date: '2026-07-02', list_date: '', 
-        market: '港', type: '港股IPO', lot_size: 1000, issue_size: '5000万股', pe_ratio: 22.1, industry: '互联网',
-        timeline: [
-          { step: '递表', date: '2026-04-15', done: true },
-          { step: '聆讯通过', date: '2026-05-20', done: true },
-          { step: '招股开始', date: '2026-06-19', done: true },
-          { step: '招股截止', date: '2026-06-26', done: false, current: true },
-          { step: '公布中签', date: '2026-07-02', done: false },
-          { step: '上市', date: '2026-07-08', done: false }
-        ]
-      },
-      { 
-        code: '02625', name: '文远知行-W', ipo_price: 35.00, 
-        status: '申购中', win_rate: 8.6,
-        apply_end_date: '2026-06-27', draw_date: '2026-07-03', list_date: '', 
-        market: '港', type: '港股IPO', lot_size: 500, issue_size: '6000万股', pe_ratio: 55.8, industry: '智能驾驶',
-        timeline: [
-          { step: '递表', date: '2026-04-20', done: true },
-          { step: '聆讯通过', date: '2026-05-25', done: true },
-          { step: '招股开始', date: '2026-06-20', done: true },
-          { step: '招股截止', date: '2026-06-27', done: false, current: true },
-          { step: '公布中签', date: '2026-07-03', done: false },
-          { step: '上市', date: '2026-07-09', done: false }
-        ]
-      },
-      { 
-        code: '118071', name: '金帝转债', ipo_price: 100, 
-        status: '中签公布', win_rate: 0.023,
-        apply_end_date: '2026-06-23', draw_date: '2026-06-25', list_date: '2026-07-05', 
-        market: '沪', type: '可转债', lot_size: 10, issue_size: '8亿元', pe_ratio: 38.6, industry: '机械制造',
-        timeline: [
-          { step: '董事会预案', date: '2026-02-10', done: true },
-          { step: '证监会核准', date: '2026-05-15', done: true },
-          { step: '股权登记日', date: '2026-06-22', done: true },
-          { step: '申购日', date: '2026-06-23', done: true },
-          { step: '中签公布', date: '2026-06-25', done: false, current: true },
-          { step: '上市', date: '2026-07-05', done: false }
-        ]
-      },
-      { 
-        code: '123457', name: '春风转债', ipo_price: 100, 
-        status: '中签公布', win_rate: 0.018,
-        apply_end_date: '2026-06-24', draw_date: '2026-06-26', list_date: '2026-07-06', 
-        market: '深', type: '可转债', lot_size: 10, issue_size: '12亿元', pe_ratio: 42.1, industry: '汽车零部件',
-        timeline: [
-          { step: '董事会预案', date: '2026-02-15', done: true },
-          { step: '证监会核准', date: '2026-05-20', done: true },
-          { step: '股权登记日', date: '2026-06-23', done: true },
-          { step: '申购日', date: '2026-06-24', done: true },
-          { step: '中签公布', date: '2026-06-26', done: false, current: true },
-          { step: '上市', date: '2026-07-06', done: false }
-        ]
-      },
-      { 
-        code: '02593', name: '映恩生物-B', ipo_price: 26.00, 
-        status: '已上市', win_rate: 12.5,
-        apply_end_date: '2026-06-12', draw_date: '2026-06-18', list_date: '2026-06-20', change_pct: 35.20, 
-        market: '港', type: '港股IPO', lot_size: 500, issue_size: '1.2亿股', pe_ratio: 35.5, industry: '生物医药',
-        timeline: [
-          { step: '递表', date: '2026-03-10', done: true },
-          { step: '聆讯通过', date: '2026-04-25', done: true },
-          { step: '招股开始', date: '2026-06-05', done: true },
-          { step: '招股截止', date: '2026-06-12', done: true },
-          { step: '公布中签', date: '2026-06-18', done: true },
-          { step: '上市', date: '2026-06-20', done: true }
-        ]
-      },
-      { 
-        code: '02589', name: '滴普科技', ipo_price: 28.50, 
-        status: '已上市', win_rate: 18.3,
-        apply_end_date: '2026-06-11', draw_date: '2026-06-17', list_date: '2026-06-19', change_pct: 12.50, 
-        market: '港', type: '港股IPO', lot_size: 1000, issue_size: '8000万股', pe_ratio: 28.3, industry: '软件服务',
-        timeline: [
-          { step: '递表', date: '2026-03-05', done: true },
-          { step: '聆讯通过', date: '2026-04-20', done: true },
-          { step: '招股开始', date: '2026-06-03', done: true },
-          { step: '招股截止', date: '2026-06-11', done: true },
-          { step: '公布中签', date: '2026-06-17', done: true },
-          { step: '上市', date: '2026-06-19', done: true }
-        ]
-      },
-      { 
-        code: '118070', name: '南芯转债', ipo_price: 100, 
-        status: '已上市', win_rate: 0.015,
-        apply_end_date: '2026-06-10', draw_date: '2026-06-12', list_date: '2026-06-18', change_pct: 22.95, 
-        market: '沪', type: '可转债', lot_size: 10, issue_size: '10亿元', pe_ratio: 45.2, industry: '半导体',
-        timeline: [
-          { step: '董事会预案', date: '2026-01-20', done: true },
-          { step: '证监会核准', date: '2026-05-10', done: true },
-          { step: '股权登记日', date: '2026-06-09', done: true },
-          { step: '申购日', date: '2026-06-10', done: true },
-          { step: '中签公布', date: '2026-06-12', done: true },
-          { step: '上市', date: '2026-06-18', done: true }
-        ]
-      }
-    ]
-
-    this.signalsData = this.formatSignals(mockSignals)
-    this.updateCurrentSignals()
-
-    const drawList = this.mergeIpoStatus(mockIpo)
-
-    this.setData({
-      sentimentLevel,
-      sentimentText,
-      mergedSentiment: score.toFixed(0),
-      mergedSentimentPercent: score,
-      sentimentFormula: {
-        ratioScore: sentiment.sh_score != null ? sentiment.sh_score.toFixed(1) : '--',
-        volTrendScore: sentiment.vol_trend_score != null ? sentiment.vol_trend_score.toFixed(1) : '--',
-        prevVolume: sentiment.prev_volume != null ? sentiment.prev_volume.toFixed(0) : '--',
-        volumeChangePct: sentiment.volume_change_pct != null ? (sentiment.volume_change_pct > 0 ? '+' : '') + sentiment.volume_change_pct.toFixed(1) : '--',
-        vol5dAvg: sentiment.volume_5d_avg != null ? sentiment.volume_5d_avg.toFixed(0) : '--',
-        vol5dChangePct: sentiment.volume_5d_change_pct != null ? (sentiment.volume_5d_change_pct > 0 ? '+' : '') + sentiment.volume_5d_change_pct.toFixed(1) : '--',
-      },
-      sentimentDetail: {
-        shVolume: sentiment.sh_volume + '亿',
-        szVolume: sentiment.sz_volume + '亿',
-        shUpCount: sentiment.sh_up_count + '只',
-        shDownCount: sentiment.sh_down_count + '只',
-        szUpCount: sentiment.sz_up_count + '只',
-        szDownCount: sentiment.sz_down_count + '只',
-        totalVolume: (sentiment.sh_volume + sentiment.sz_volume).toFixed(0) + '亿',
-        totalUpCount: (sentiment.sh_up_count + sentiment.sz_up_count) + '只',
-        totalDownCount: (sentiment.sh_down_count + sentiment.sz_down_count) + '只'
-      },
-      doubleLowMedian: cb.double_low_median,
-      premiumMedian: cb.premium_median,
-      bondCount: cb.count,
-      lofCount: lof.count,
-      ipoUpcoming: ipo.upcoming_count,
-      priceMedian: cb.price_median,
-      lofPremiumAvg: lof.premium_avg,
-      ipoAvgReturn: ipo.avg_return,
-      ipoDrawCount: drawList.length,
-      ipoDrawList: drawList,
-      isMock: true
-    })
   },
 
   formatSignals(data) {

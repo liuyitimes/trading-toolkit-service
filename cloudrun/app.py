@@ -6,10 +6,12 @@
 
 import logging
 import os
+import time
 import traceback
 
 from flask import Flask, request
 from flask_cors import CORS
+from datetime import datetime, timezone, timedelta
 
 from services.factory import create_default_factory
 from services.cache import (
@@ -17,6 +19,8 @@ from services.cache import (
     get_cache_ttl,
     build_cache_key,
     get_with_cache_lock,
+    get_with_swr,
+    warmup_cache,
 )
 from utils.response import api_response, api_error, ErrorCode
 from utils.limiting import limit
@@ -38,16 +42,110 @@ cache = get_cache_manager()
 
 logger.info(f'后端启动完成，主数据源: {factory._primary_name}，缓存后端: {cache.backend_type}')
 
+# ==================== 请求日志 ====================
+
+CST = timezone(timedelta(hours=8))
+API_LOGS = []
+MAX_API_LOGS = 200
+
+
+@app.before_request
+def log_request_start():
+    """记录请求开始时间到 request 上下文（任何异常都不应影响请求本身）"""
+    try:
+        if not request.path.startswith('/api/v1/admin/api-logs'):
+            request._start_time = time.time()
+    except Exception:
+        pass
+
+
+@app.after_request
+def log_request_end(response):
+    """记录请求日志（任何异常都不应影响响应本身）"""
+    try:
+        if not hasattr(request, '_start_time'):
+            return response
+        if request.path.startswith('/api/v1/admin/api-logs'):
+            return response
+
+        start = getattr(request, '_start_time', None) or time.time()
+        duration = round((time.time() - start) * 1000, 1)
+
+        # 请求正文
+        req_body = None
+        try:
+            if request.is_json and request.data:
+                try:
+                    req_body = request.get_json(silent=True)
+                except Exception:
+                    req_body = str(request.data)[:500]
+        except Exception:
+            req_body = None
+
+        # 响应正文：限制大小，预格式化为字符串，避免前端再做 JSON.stringify
+        import json as _json
+        MAX_RESP_LEN = 8000
+        resp_body_str = None
+        resp_truncated = False
+        try:
+            resp_data = response.get_data(as_text=True)
+            if resp_data:
+                try:
+                    resp_json = _json.loads(resp_data)
+                    resp_body_str = _json.dumps(resp_json, ensure_ascii=False, indent=2)
+                except Exception:
+                    resp_body_str = resp_data
+                if resp_body_str and len(resp_body_str) > MAX_RESP_LEN:
+                    resp_body_str = resp_body_str[:MAX_RESP_LEN] + '\n... (已截断，共 ' + str(len(resp_body_str)) + ' 字符)'
+                    resp_truncated = True
+        except Exception:
+            resp_body_str = '(响应读取失败)'
+
+        # 请求正文预格式化
+        req_body_str = None
+        if req_body is not None:
+            try:
+                req_body_str = _json.dumps(req_body, ensure_ascii=False, indent=2)
+            except Exception:
+                req_body_str = str(req_body)[:500]
+            if req_body_str and len(req_body_str) > MAX_RESP_LEN:
+                req_body_str = req_body_str[:MAX_RESP_LEN] + '\n... (已截断)'
+                resp_truncated = True
+
+        log_entry = {
+            'id': len(API_LOGS) + 1,
+            'time': datetime.now(CST).strftime('%H:%M:%S.%f')[:-3],
+            'method': request.method,
+            'path': request.full_path if request.query_string else request.path,
+            'status': response.status_code,
+            'duration': duration,
+            'request_body': req_body_str,
+            'response_body': resp_body_str,
+            'truncated': resp_truncated,
+        }
+
+        API_LOGS.append(log_entry)
+        if len(API_LOGS) > MAX_API_LOGS:
+            API_LOGS.pop(0)
+    except Exception as e:
+        # 日志记录失败绝不影响响应
+        try:
+            logger.warning(f'请求日志记录失败: {e}')
+        except Exception:
+            pass
+    return response
+
 
 # ==================== 通用数据获取 ====================
 
-def fetch_with_cache(data_type: str, method_name: str, force_refresh=False, **kwargs):
+def fetch_with_cache(data_type: str, method_name: str, force_refresh=False, use_swr=True, **kwargs):
     """通用数据获取：缓存 → 数据源降级
 
     Args:
         data_type: 缓存类型（如 convertible_list、lof_list）
         method_name: 数据源方法名
         force_refresh: 是否强制刷新
+        use_swr: 是否使用 stale-while-revalidate 模式（有缓存时立即返回，后台异步刷新）
         **kwargs: 传递给数据源方法的参数
 
     Returns:
@@ -57,20 +155,36 @@ def fetch_with_cache(data_type: str, method_name: str, force_refresh=False, **kw
                                  **{k: str(v) for k, v in kwargs.items() if v is not None})
     ttl = get_cache_ttl(data_type)
 
-    # 非强制刷新时先查缓存
-    if not force_refresh:
+    def _fetch():
+        data, source = factory.get_with_fallback(method_name, **kwargs)
+        return data
+
+    # 强制刷新
+    if force_refresh:
+        data, source = factory.get_with_fallback(method_name, **kwargs)
+        if data is not None:
+            cache.set(cache_key, data, ttl)
+        return data, source or 'unknown', False
+
+    # SWR 模式：有缓存立即返回，后台异步刷新
+    if use_swr:
         cached = cache.get(cache_key)
         if cached is not None:
+            # 有缓存，后台异步刷新
+            from services.cache import _maybe_trigger_background_refresh
+            _maybe_trigger_background_refresh(cache_key, _fetch, ttl, 0.7)
             return cached, 'cache', True
 
-    # 通过工厂带降级获取数据
-    data, source = factory.get_with_fallback(method_name, **kwargs)
+    # 普通模式：先查缓存，未命中则同步获取
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached, 'cache', True
 
+    data, source = factory.get_with_fallback(method_name, **kwargs)
     if data is not None:
         cache.set(cache_key, data, ttl)
         return data, source or 'unknown', False
 
-    # 所有数据源均失败
     return None, 'none', False
 
 
@@ -194,6 +308,18 @@ def convertible_detail(code):
         'convertible_detail', 'get_convertible_detail', force_refresh=force, code=code)
     if data is None:
         return api_error(*ErrorCode.NOT_FOUND, f'可转债 {code} 不存在', 404)
+    return api_response(data, source=source, cached=cached)
+
+
+@app.route('/api/v1/convertible/pending')
+@limit(30)
+def convertible_pending():
+    """待发/配售可转债列表"""
+    force = request.args.get('refresh', '').lower() == 'true'
+    data, source, cached = fetch_with_cache(
+        'convertible_pending', 'get_convertible_pending', force_refresh=force)
+    if data is None:
+        return api_response([], source='none', cached=False)
     return api_response(data, source=source, cached=cached)
 
 
@@ -338,6 +464,49 @@ def admin_cache_clear():
     else:
         cache.clear_pattern('*')
         return api_response({'cleared': 'all', 'message': '已清除全部缓存'})
+
+
+@app.route('/api/v1/admin/api-logs')
+def admin_api_logs():
+    """查询接口日志"""
+    try:
+        page = max(1, request.args.get('page', 1, type=int) or 1)
+        page_size = min(200, max(1, request.args.get('page_size', 50, type=int) or 50))
+        search = (request.args.get('search', '') or '').strip()
+
+        logs = list(API_LOGS)
+        if search:
+            s = search.lower()
+            logs = [l for l in logs if s in str(l.get('path', '')).lower()
+                    or s in str(l.get('response_body', '')).lower()
+                    or s in str(l.get('request_body', '')).lower()]
+        logs.reverse()
+        total = len(logs)
+        start = (page - 1) * page_size
+        end = start + page_size
+        page_logs = logs[start:end]
+
+        return api_response({
+            'total': total,
+            'page': page,
+            'page_size': page_size,
+            'has_more': end < total,
+            'logs': page_logs,
+        })
+    except Exception as e:
+        logger.error(f'查询接口日志异常: {e}')
+        return api_error(*ErrorCode.INTERNAL_ERROR, f'查询日志失败: {e}')
+
+
+@app.route('/api/v1/admin/api-logs/clear', methods=['POST'])
+def admin_api_logs_clear():
+    """清空接口日志"""
+    try:
+        API_LOGS.clear()
+        return api_response({'message': '日志已清空'})
+    except Exception as e:
+        logger.error(f'清空接口日志异常: {e}')
+        return api_error(*ErrorCode.INTERNAL_ERROR, f'清空日志失败: {e}')
 
 
 # ==================== 向后兼容：旧路径重定向 ====================
@@ -664,7 +833,34 @@ def update_settings(openid):
         db.close()
 
 
+# ==================== 缓存预热 ====================
+
+def start_cache_warmup():
+    """启动缓存预热（后台异步执行，不阻塞服务启动）"""
+    import threading
+
+    def _warmup():
+        try:
+            warmup_items = [
+                ('market_sentiment', lambda: factory.get_with_fallback('get_market_sentiment')[0]),
+                ('convertible_temperature', lambda: factory.get_with_fallback('get_convertible_temperature')[0]),
+                ('convertible_signals', lambda: factory.get_with_fallback('get_convertible_signals')[0]),
+                ('fund_flow', lambda: factory.get_with_fallback('get_fund_flow')[0]),
+                ('lof_summary', lambda: factory.get_with_fallback('get_lof_summary')[0]),
+                ('hk_ipo_summary', lambda: factory.get_with_fallback('get_hk_ipo_summary')[0]),
+                ('convertible_list', lambda: factory.get_with_fallback('get_convertible_list', page=1, page_size=50)[0]),
+            ]
+            warmup_cache(warmup_items)
+        except Exception as e:
+            logger.error(f'缓存预热异常: {e}')
+
+    t = threading.Thread(target=_warmup, daemon=True)
+    t.start()
+    logger.info('缓存预热已启动（后台执行）')
+
+
 # ==================== 启动 ====================
 
 if __name__ == '__main__':
+    start_cache_warmup()
     app.run(host='0.0.0.0', port=8080, debug=True)

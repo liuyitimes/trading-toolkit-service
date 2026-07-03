@@ -135,8 +135,7 @@ class DataSourceFactory:
 # ==================== 全局工厂实例 ====================
 
 def create_default_factory() -> DataSourceFactory:
-    """创建默认工厂，注册 akshare（主）→ efinance → tushare → mock（兜底）降级链"""
-    from services.mock_source import MockSource
+    """创建默认工厂，注册 akshare（主）→ efinance → tushare 降级链"""
     from services.akshare_source import AkshareSource
     from services.efinance_source import EfinanceSource
     from services.tushare_source import TushareSource
@@ -145,15 +144,8 @@ def create_default_factory() -> DataSourceFactory:
     factory.register('akshare', AkshareSource())
     factory.register('efinance', EfinanceSource())
     factory.register('tushare', TushareSource())
-    factory.register('mock', MockSource())
 
-    # 默认主源由环境变量控制
-    use_mock = os.environ.get('USE_MOCK', 'false').lower() == 'true'
-    if use_mock:
-        factory.set_primary('mock')
-        factory.set_fallback_chain(['mock'])
-    else:
-        factory.set_primary('akshare')
-        factory.set_fallback_chain(['akshare', 'efinance', 'tushare', 'mock'])
+    factory.set_primary('akshare')
+    factory.set_fallback_chain(['akshare', 'efinance', 'tushare'])
 
     return factory

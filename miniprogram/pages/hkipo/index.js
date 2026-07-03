@@ -30,25 +30,30 @@ Page({
     this.setData({ isDarkMode: theme === 'dark' })
     this.refreshFavorites()
     this.checkStateUpdates()
+    this._updateTabBar(3)
+  },
+
+  _updateTabBar(index) {
     if (typeof this.getTabBar === 'function' && this.getTabBar()) {
       this.getTabBar().checkDarkMode()
-      this.getTabBar().setData({ selected: 3 })
+      this.getTabBar().setData({ selected: index })
     }
   },
 
   checkStateUpdates() {
     const gData = app.globalData || {}
-    const currentFavVer = gData._lastFavVersion_hkipo || 0
-    const currentIpoVer = gData._lastIpoVersion_hkipo || 0
-    if ((gData.favoriteVersion || 0) > currentFavVer) {
-      gData._lastFavVersion_hkipo = gData.favoriteVersion
+    if ((gData.favoriteVersion || 0) > (this._lastFavVer || 0)) {
+      this._lastFavVer = gData.favoriteVersion
       this.refreshFavorites()
     }
-    if ((gData.ipoStatusVersion || 0) > currentIpoVer) {
-      gData._lastIpoVersion_hkipo = gData.ipoStatusVersion
+    if ((gData.ipoStatusVersion || 0) > (this._lastIpoVer || 0)) {
+      this._lastIpoVer = gData.ipoStatusVersion
       this.loadIpoStatus()
     }
   },
+
+  _lastFavVer: 0,
+  _lastIpoVer: 0,
 
   onPullDownRefresh() {
     this.setData({ error: null })
@@ -137,10 +142,6 @@ Page({
         error: '数据加载失败，请下拉刷新重试'
       })
     }
-  },
-
-  getMockData() {
-    return []
   },
 
   normalizeList(list) {
@@ -261,9 +262,10 @@ Page({
   },
 
   refreshFavorites() {
+    const favCodes = favoriteManager.getCodesByType('hkipo')
     const updateList = (list) => list.map(item => ({
       ...item,
-      isFavorite: favoriteManager.isFavorite(item.code, 'hkipo')
+      isFavorite: favCodes.has(item.code)
     }))
 
     const allList = updateList(this.data.allList)

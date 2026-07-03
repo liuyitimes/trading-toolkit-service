@@ -5,9 +5,25 @@ const config = require('../config')
 
 // 开发环境判断：优先用 config 中的 currentEnv
 const env = config.autoSwitch ? 'development' : (config.currentEnv || 'development')
-const BASE_URL = config[env].baseUrl
+// 兜底 BASE_URL（仅当 app 未初始化或未配置 cloudRunUrl 时使用）
+const FALLBACK_BASE_URL = config[env].baseUrl
 
-console.log(`[cloudApi] 环境: ${env}, BASE_URL: ${BASE_URL}`)
+// 运行时获取 BASE_URL：优先用 app.getCloudRunUrl()（用户在设置页配置的地址），
+// 回退到 config.js 的默认值。app 在模块加载时可能尚未初始化，故延迟到调用时获取。
+function getBaseUrl() {
+  try {
+    const app = getApp()
+    if (app && typeof app.getCloudRunUrl === 'function') {
+      const url = app.getCloudRunUrl()
+      if (url) return url.replace(/\/+$/, '')  // 去掉末尾斜杠
+    }
+  } catch (e) {
+    // app 未初始化，忽略
+  }
+  return FALLBACK_BASE_URL
+}
+
+console.log(`[cloudApi] 环境: ${env}, 默认 BASE_URL: ${FALLBACK_BASE_URL}`)
 
 // action → API 路径映射表
 const ACTION_TO_API = {
@@ -17,6 +33,7 @@ const ACTION_TO_API = {
   'convertibleTemperature': '/api/v1/convertible/temperature',
   'convertibleDetail': '/api/v1/convertible/detail',
   'convertibleNewBonds': '/api/v1/convertible/list?new_bonds=true',
+  'convertiblePending': '/api/v1/convertible/pending',
   'lofList': '/api/v1/lof/list',
   'lofOpportunities': '/api/v1/lof/opportunities',
   'lofSummary': '/api/v1/lof/summary',
@@ -25,7 +42,9 @@ const ACTION_TO_API = {
   'hkipoSummary': '/api/v1/hkipo/summary',
   'sentiment': '/api/v1/market/sentiment',
   'fundFlow': '/api/v1/market/fund-flow',
-  'health': '/api/v1/admin/health'
+  'health': '/api/v1/admin/health',
+  'apiLogs': '/api/v1/admin/api-logs',
+  'apiLogsClear': '/api/v1/admin/api-logs/clear'
 }
 
 /**
@@ -42,6 +61,7 @@ function callHttp(action, data = {}) {
       return
     }
 
+    const BASE_URL = getBaseUrl()
     let url = BASE_URL + apiPath
     // 对于 convertibleDetail，需要拼接 code 参数到路径
     if (action === 'convertibleDetail' && data.code) {

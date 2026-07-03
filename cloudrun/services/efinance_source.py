@@ -241,6 +241,10 @@ class EfinanceSource(BaseDataSource):
             print(f'[EfinanceSource] get_convertible_detail 失败: {e}')
             return {}
 
+    def get_convertible_pending(self) -> list:
+        """efinance 无待发/配售接口，返回空"""
+        return []
+
     def get_convertible_temperature(self) -> dict:
         """通过 efinance 获取可转债市场温度"""
         try:

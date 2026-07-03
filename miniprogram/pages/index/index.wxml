@@ -1,8 +1,4 @@
 <view class="container {{isDarkMode ? 'dark-mode' : ''}}">
-  <view class="mock-tip" wx:if="{{isMock}}">
-    <text class="mock-tip-text">⚠️ 当前为演示数据，请部署云函数获取实时行情</text>
-  </view>
-
   <view class="banner">
     <view class="banner-bg"></view>
     <view class="banner-content" bindtap="switchQuote">
@@ -80,6 +76,17 @@
           <text class="section-subtitle">主力净流入</text>
         </view>
         <view class="info-icon" bindtap="showFundFlowInfo">ⓘ</view>
+      </view>
+      <view class="net-inflow-bar {{fundFlowNet ? '' : 'hidden'}}">
+        <view class="net-inflow-row">
+          <text class="net-inflow-label">大盘净流入</text>
+          <text class="net-inflow-value {{fundFlowNet.netTrend}}">{{fundFlowNet.netInflowText}}亿</text>
+        </view>
+        <view class="net-inflow-detail">
+          <text class="net-inflow-detail-item">总流入 {{fundFlowNet.totalInflow}}亿</text>
+          <text class="net-inflow-divider">|</text>
+          <text class="net-inflow-detail-item">总流出 {{fundFlowNet.totalOutflow}}亿</text>
+        </view>
       </view>
       <view class="fund-flow-grid" bindtap="openFundFlowModal">
         <view class="fund-flow-item" wx:for="{{topSectors}}" wx:key="name">
@@ -632,10 +639,12 @@
     </view>
   </view>
 
-  <view class="loading-overlay" wx:if="{{loading}}">
-    <view class="loading-content">
-      <view class="loading-spinner"></view>
-      <text class="loading-text">加载中...</text>
-    </view>
+  <view class="loading-tip" wx:if="{{loadProgress}}">
+    <view class="loading-tip-spinner"></view>
+    <text class="loading-tip-text">{{loadProgress}}</text>
+  </view>
+
+  <view class="load-error" wx:if="{{loadError}}">
+    <text class="load-error-text">{{loadError}}</text>
   </view>
 </view>

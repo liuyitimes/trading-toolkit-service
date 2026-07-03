@@ -165,6 +165,27 @@
   display: block;
 }
 
+.section-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  margin-bottom: 20rpx;
+}
+
+.section-title-row .section-title {
+  margin-bottom: 0;
+}
+
+.section-badge {
+  font-size: 20rpx;
+  padding: 4rpx 14rpx;
+  border-radius: 20rpx;
+  background: #EBF5FF;
+  color: #0969DA;
+  border: 1rpx solid #58A6FF;
+  font-weight: 500;
+}
+
 .info-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -176,6 +197,87 @@
   flex-direction: column;
   gap: 6rpx;
 }
+
+/* ==================== 时间线 ==================== */
+.timeline-scroll {
+  white-space: nowrap;
+}
+
+.timeline {
+  display: flex;
+  padding: 16rpx 0;
+}
+
+.timeline-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 140rpx;
+  position: relative;
+}
+
+.timeline-node::after {
+  content: '';
+  position: absolute;
+  top: 20rpx;
+  left: 50%;
+  width: 100%;
+  height: 2rpx;
+  background: var(--border-color, #D0D7DE);
+  z-index: 0;
+}
+
+.timeline-node:last-child::after { display: none; }
+.timeline-node.done::after { background: #4AC26B; }
+
+.node-dot {
+  width: 40rpx; height: 40rpx;
+  border-radius: 50%;
+  background: var(--border-color, #D0D7DE);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
+  margin-bottom: 8rpx;
+}
+
+.timeline-node.done .node-dot { background: #4AC26B; }
+.timeline-node.current .node-dot { background: var(--primary-color, #0969DA); }
+
+.node-icon { font-size: 20rpx; color: #fff; }
+.node-num { font-size: 18rpx; color: #fff; font-weight: 700; }
+.node-step { font-size: 22rpx; color: var(--text-secondary, #59636E); margin-bottom: 4rpx; }
+.node-date { font-size: 20rpx; color: var(--text-muted, #818B98); }
+
+.timeline-node.done .node-step { color: #1A7F37; }
+.timeline-node.current .node-step { color: var(--primary-color, #0969DA); font-weight: 600; }
+
+.current-tag {
+  font-size: 18rpx;
+  padding: 2rpx 12rpx;
+  border-radius: 10rpx;
+  background: var(--primary-color, #0969DA);
+  color: #fff;
+  font-weight: 600;
+  margin-top: 4rpx;
+  animation: pulse-tag 2s ease-in-out infinite;
+}
+
+@keyframes pulse-tag {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(1.05); }
+}
+
+/* ==================== 暗夜模式 ==================== */
+.dark-mode .timeline-node::after { background: #30363D; }
+.dark-mode .timeline-node.done::after { background: #238636; }
+.dark-mode .node-dot { background: #30363D; }
+.dark-mode .timeline-node.done .node-dot { background: #238636; }
+.dark-mode .timeline-node.current .node-dot { background: #58A6FF; }
+.dark-mode .node-step { color: #8B949E; }
+.dark-mode .node-date { color: #6E7681; }
+.dark-mode .timeline-node.done .node-step { color: #3FB950; }
+.dark-mode .timeline-node.current .node-step { color: #58A6FF; }
 
 .info-item.full {
   grid-column: 1 / -1;

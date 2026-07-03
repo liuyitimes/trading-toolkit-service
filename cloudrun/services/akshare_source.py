@@ -11,6 +11,7 @@ from services.convertible_bond import (
     get_convertible_bond_list,
     get_convertible_bond_detail,
     get_convertible_bond_signals,
+    get_pending_bonds,
 )
 from services.lof_fund import (
     get_lof_list as _raw_lof_list,
@@ -158,6 +159,16 @@ class AkshareSource(BaseDataSource):
             print(f'[AkshareSource] get_convertible_temperature 失败: {e}')
             return {}
 
+    # ---- 待发/配售 ----
+
+    def get_convertible_pending(self) -> list:
+        try:
+            rows = get_pending_bonds()
+            return rows if rows else []
+        except Exception as e:
+            print(f'[AkshareSource] get_convertible_pending 失败: {e}')
+            return []
+
     # ---- LOF ----
 
     def get_lof_list(self, **kwargs) -> list:
@@ -265,6 +276,26 @@ class AkshareSource(BaseDataSource):
         except Exception as e:
             print(f'[AkshareSource] 新浪指数行情失败: {e}')
 
+        # 1.5 北交所成交额（通过bj899050日线推算）
+        if result.get('sh_volume', 0) > 0:
+            try:
+                bj_df = ak.stock_zh_index_daily(symbol='bj899050')
+                if bj_df is not None and len(bj_df) >= 1:
+                    sh_daily_df = ak.stock_zh_index_daily(symbol='sh000001')
+                    if sh_daily_df is not None and len(sh_daily_df) >= 1:
+                        sh_vol_daily = float(sh_daily_df.iloc[-1]['volume'])
+                        bj_vol_daily = float(bj_df.iloc[-1]['volume'])
+                        sh_amount_yi = result['sh_volume']
+                        if sh_vol_daily > 0:
+                            bj_amount = round(bj_vol_daily * sh_amount_yi * 1e8 / sh_vol_daily / 1e8, 0)
+                            result['bj_volume'] = int(bj_amount)
+            except Exception as e:
+                print(f'[AkshareSource] 北交所成交额计算失败: {e}')
+
+        # 沪深京三市总成交额
+        bj_vol = result.get('bj_volume', 0) or 0
+        result['total_volume'] = round(result.get('sh_volume', 0) + result.get('sz_volume', 0) + bj_vol, 0)
+
         # 2. 乐咕涨跌家数（item/value 格式）
         try:
             df = ak.stock_market_activity_legu()
@@ -293,7 +324,7 @@ class AkshareSource(BaseDataSource):
                     ratio_score = up_ratio * 100
 
                     # 因子2: 量能趋势分 (0-100) — 权重40%
-                    # 对比昨日成交量和5日均量
+                    # 对比昨日成交量和5日均量（统一用成交额亿元）
                     vol_trend_score = 50
                     prev_volume = 0
                     volume_change_pct = 0
@@ -305,17 +336,27 @@ class AkshareSource(BaseDataSource):
                             vol_today_daily = float(idx_df.iloc[-1]['volume'])
                             vol_prev_daily = float(idx_df.iloc[-2]['volume'])
                             vol_5d_list = [float(idx_df.iloc[-1 - i]['volume']) for i in range(5)]
-                            vol_5d_avg = sum(vol_5d_list) / 5
+                            vol_5d_avg_raw = sum(vol_5d_list) / 5
 
-                            prev_volume = vol_prev_daily
-                            volume_change_pct = round((vol_today_daily / vol_prev_daily - 1) * 100, 1)
-                            volume_5d_change_pct = round((vol_today_daily / vol_5d_avg - 1) * 100, 1)
+                            # 用新浪今日成交额(亿元) ÷ 今日成交量(股) 算出均价，再换算历史成交额
+                            today_amount_yi = result.get('sh_volume', 0)
+                            if today_amount_yi and vol_today_daily > 0:
+                                price_per_share = today_amount_yi * 1e8 / vol_today_daily
+                                prev_volume = round(vol_prev_daily * price_per_share / 1e8, 0)
+                                vol_5d_avg = round(vol_5d_avg_raw * price_per_share / 1e8, 0)
+                                volume_change_pct = round((vol_today_daily / vol_prev_daily - 1) * 100, 1)
+                                volume_5d_change_pct = round((vol_today_daily / vol_5d_avg_raw - 1) * 100, 1)
+                            else:
+                                prev_volume = round(vol_prev_daily / 1e8, 0)
+                                vol_5d_avg = round(vol_5d_avg_raw / 1e8, 0)
+                                volume_change_pct = round((vol_today_daily / vol_prev_daily - 1) * 100, 1)
+                                volume_5d_change_pct = round((vol_today_daily / vol_5d_avg_raw - 1) * 100, 1)
 
                             # 单日量比得分：量比1.0=50分, 1.5=100分, 0.5=0分
                             day_ratio = vol_today_daily / vol_prev_daily
                             day_score = max(0, min(100, 50 + (day_ratio - 1) * 100))
                             # 5日均量得分
-                            avg_ratio = vol_today_daily / vol_5d_avg
+                            avg_ratio = vol_today_daily / vol_5d_avg_raw
                             avg_score = max(0, min(100, 50 + (avg_ratio - 1) * 100))
                             # 综合量能趋势分
                             vol_trend_score = round((day_score + avg_score) / 2, 1)
@@ -323,9 +364,9 @@ class AkshareSource(BaseDataSource):
                         print(f'[AkshareSource] 计算量能趋势失败: {e}')
 
                     result['vol_trend_score'] = vol_trend_score
-                    result['prev_volume'] = round(prev_volume / 1e8, 0)
+                    result['prev_volume'] = float(prev_volume)
                     result['volume_change_pct'] = volume_change_pct
-                    result['volume_5d_avg'] = round(vol_5d_avg / 1e8, 0)
+                    result['volume_5d_avg'] = float(vol_5d_avg)
                     result['volume_5d_change_pct'] = volume_5d_change_pct
 
                     # 综合情绪分 = 涨跌分×60% + 量能趋势分×40%
@@ -354,7 +395,8 @@ class AkshareSource(BaseDataSource):
         standard_keys = [
             'sentiment_score', 'vol_trend_score', 'prev_volume', 'volume_change_pct',
             'volume_5d_avg', 'volume_5d_change_pct',
-            'sh_score', 'sz_score', 'sh_volume', 'sz_volume', 'north',
+            'sh_score', 'sz_score', 'sh_volume', 'sz_volume', 'bj_volume',
+            'total_volume', 'north',
             'sh_change', 'sz_change', 'sh_up_count', 'sh_down_count',
             'sz_up_count', 'sz_down_count', 'sh_price', 'sz_price',
             'cyb_price', 'cyb_change', 'hs300_price', 'hs300_change',
@@ -371,6 +413,8 @@ class AkshareSource(BaseDataSource):
         result.setdefault('sz_score', result.get('sh_score', 0))
         result.setdefault('sz_up_count', 0)
         result.setdefault('sz_down_count', 0)
+        result.setdefault('bj_volume', 0)
+        result.setdefault('total_volume', 0)
         result.setdefault('north', 0)
 
         standardized = {k: result.get(k, 0) for k in standard_keys}
@@ -417,6 +461,15 @@ class AkshareSource(BaseDataSource):
 
             # 按净流入排序
             sectors.sort(key=lambda x: x['flow'], reverse=True)
+
+            # 大盘资金净流入（所有板块净流入总和）
+            total_inflow = round(sum(s['flow'] for s in sectors if s['flow'] > 0), 2)
+            total_outflow = round(sum(s['flow'] for s in sectors if s['flow'] < 0), 2)
+            net_inflow = round(total_inflow + total_outflow, 2)
+
+            result['total_inflow'] = total_inflow
+            result['total_outflow'] = abs(total_outflow)
+            result['net_inflow'] = net_inflow
 
             # Top 流入和流出
             top_inflow = [s for s in sectors if s['flow'] > 0][:10]

@@ -111,6 +111,16 @@ exports.main = async (event, context) => {
         }
       }
 
+      // ==================== 可转债待发/配售 ====================
+      case 'convertiblePending': {
+        // 先尝试调用云托管后端
+        const pendingData = await callCloudRun('/api/v1/convertible/pending')
+        if (pendingData) {
+          return { success: true, data: pendingData, source: 'cloudrun' }
+        }
+        return { success: true, data: [], source: 'none' }
+      }
+
       // ==================== 可转债详情（云托管） ====================
       case 'convertibleDetail': {
         const bondCode = event.code || event.bondCode || ''

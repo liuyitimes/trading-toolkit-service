@@ -167,6 +167,10 @@ class TushareSource(BaseDataSource):
             logger.error(f'tushare 获取可转债详情失败: {e}')
             return {}
 
+    def get_convertible_pending(self):
+        """待发可转债（tushare 无此接口）"""
+        return []
+
     def get_convertible_temperature(self):
         """获取可转债市场温度（tushare 无直接接口，返回空让工厂降级）"""
         return {}

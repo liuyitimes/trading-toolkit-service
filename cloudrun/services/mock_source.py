@@ -221,6 +221,12 @@ class MockSource(BaseDataSource):
             'sz_flow': 14.24,
         }
 
+    # ---- 待发/配售 ----
+
+    def get_convertible_pending(self) -> list:
+        from mock_data import CONVERTIBLE_PENDING_LIST
+        return [dict(item) for item in CONVERTIBLE_PENDING_LIST]
+
     # ---- LOF ----
 
     def get_lof_list(self, **kwargs) -> list:

@@ -108,7 +108,8 @@
       </view>
 
       <view class="table-body">
-        <view class="table-row" wx:for="{{filteredList}}" wx:key="index" bindtap="goToDetail" data-code="{{item.bondCode}}" wx:if="{{showSearch}}">
+        <block wx:for="{{filteredList}}" wx:key="index" wx:if="{{showSearch}}">
+          <view class="table-row" bindtap="goToDetail" data-code="{{item.bondCode}}">
           <view class="col-name">
             <view class="name-row">
               <text class="exchange-icon sh" wx:if="{{item.exchange === '沪'}}">沪</text>
@@ -154,65 +155,280 @@
           </view>
           <view class="col-extra" wx:if="{{currentTab === 'down-revised'}}">
             <text class="extra-value {{item.downReviseClass}}">{{item.downReviseGap}}</text>
+          </view>
+        </view>
+        </block>
+
+        <!-- 配售Tab - 二级Tab + 排序 -->
+        <view class="placement-sub-tabs" wx:if="{{!showSearch && currentTab === 'placement'}}">
+          <view class="placement-sub-row">
+            <view class="placement-sub-item {{placementSubTab === 'all' ? 'active' : ''}}" bindtap="switchTab" data-tab="placement-sub" data-sub="all">
+              <text class="placement-sub-label">全部</text>
+              <text class="placement-sub-count">{{placementTabStats.allCount}}</text>
+            </view>
+            <view class="placement-sub-item {{placementSubTab === 'subscribing' ? 'active' : ''}}" bindtap="switchTab" data-tab="placement-sub" data-sub="subscribing">
+              <text class="placement-sub-label">申购中</text>
+              <text class="placement-sub-count hot">{{placementTabStats.subscribingCount}}</text>
+            </view>
+            <view class="placement-sub-item {{placementSubTab === 'pending' ? 'active' : ''}}" bindtap="switchTab" data-tab="placement-sub" data-sub="pending">
+              <text class="placement-sub-label">待上市</text>
+              <text class="placement-sub-count">{{placementTabStats.pendingListCount}}</text>
+            </view>
+            <view class="placement-sub-item {{placementSubTab === 'approved' ? 'active' : ''}}" bindtap="switchTab" data-tab="placement-sub" data-sub="approved">
+              <text class="placement-sub-label">审批中</text>
+              <text class="placement-sub-count">{{placementTabStats.approvedCount}}</text>
+            </view>
+          </view>
+          <view class="placement-sort-row">
+            <text class="sort-btn {{placementSortBy === 'composite' ? 'active' : ''}}" bindtap="switchTab" data-tab="placement-sort" data-field="composite">推荐{{placementSortBy === 'composite' ? (placementSortAsc ? '↑' : '↓') : ''}}</text>
+            <text class="sort-btn {{placementSortBy === 'cashRatio' ? 'active' : ''}}" bindtap="switchTab" data-tab="placement-sort" data-field="cashRatio">含权{{placementSortBy === 'cashRatio' ? (placementSortAsc ? '↑' : '↓') : ''}}</text>
+            <text class="sort-btn {{placementSortBy === 'safetyPad' ? 'active' : ''}}" bindtap="switchTab" data-tab="placement-sort" data-field="safetyPad">安全垫{{placementSortBy === 'safetyPad' ? (placementSortAsc ? '↑' : '↓') : ''}}</text>
+            <text class="sort-btn {{placementSortBy === 'issueSize' ? 'active' : ''}}" bindtap="switchTab" data-tab="placement-sort" data-field="issueSize">规模{{placementSortBy === 'issueSize' ? (placementSortAsc ? '↑' : '↓') : ''}}</text>
+            <text class="sort-btn {{placementSortBy === 'stockChange' ? 'active' : ''}}" bindtap="switchTab" data-tab="placement-sort" data-field="stockChange">涨幅{{placementSortBy === 'stockChange' ? (placementSortAsc ? '↑' : '↓') : ''}}</text>
           </view>
         </view>
 
-        <view class="table-row" wx:for="{{currentList}}" wx:key="index" bindtap="goToDetail" data-code="{{item.bondCode}}" wx:if="{{!showSearch}}">
-          <view class="col-name">
-            <view class="name-row">
-              <text class="exchange-icon sh" wx:if="{{item.exchange === '沪'}}">沪</text>
-              <text class="exchange-icon sz" wx:elif="{{item.exchange === '深'}}">深</text>
-              <text class="exchange-icon bj" wx:elif="{{item.exchange === '京'}}">京</text>
-              <text class="bond-name">{{item.bondName}}</text>
-              <text class="fav-icon {{item.isFavorite ? 'active' : ''}}" catchtap="toggleFavorite" data-code="{{item.bondCode}}" data-index="{{index}}">{{item.isFavorite ? '★' : '☆'}}</text>
+        <!-- 配售Tab行 - 策略版面重设计 -->
+        <block wx:for="{{currentList}}" wx:key="index" wx:if="{{!showSearch && currentTab === 'placement'}}">
+          <view class="table-row placement-row-depth" bindtap="openPendingDetail" data-index="{{index}}">
+            <view class="col-name placement-name-col">
+              <view class="name-row">
+                <text class="exchange-icon sh" wx:if="{{item.exchange === '沪'}}">沪</text>
+                <text class="exchange-icon sz" wx:elif="{{item.exchange === '深'}}">深</text>
+                <text class="exchange-icon bj" wx:elif="{{item.exchange === '京'}}">京</text>
+                <text class="bond-name">{{item.stockName}}</text>
+                <text class="risk-tag {{item.riskClass}}" wx:if="{{item.riskLevel}}">{{item.riskLabel}}</text>
+                <text class="reg-badge {{item.regBadgeClass}}" wx:if="{{item.regBadge}}">{{item.regBadge}}</text>
+              </view>
+              <view class="code-row">
+                <text class="bond-code">{{item.stockCode}}</text>
+                <text class="code-price">{{item.stockPrice}}</text>
+                <text class="code-change {{item.stockChangeUp ? 'positive' : 'negative'}}">{{item.stockChange}}</text>
+                <text class="code-bar">|</text>
+                <text class="stage-list-dot {{item.stageDot}}"></text>
+                <text class="placement-rating" wx:if="{{item.rating !== '--' && item.rating}}">{{item.rating}}</text>
+                <text class="stock-code placement-progress {{item.progressClass}}">{{item.progress}}</text>
+              </view>
+              <view class="placement-core-row">
+                <view class="core-item">
+                  <text class="core-label">百元含权</text>
+                  <text class="core-value highlight">{{item.cashRatio}}</text>
+                </view>
+                <view class="core-item">
+                  <text class="core-label">安全垫</text>
+                  <text class="core-value {{item._safetyPadRaw > 8 ? 'positive' : item._safetyPadRaw > 3 ? 'warning' : 'negative'}}">{{item.safetyPad}}</text>
+                </view>
+                <view class="core-item">
+                  <text class="core-label">预估收益</text>
+                  <text class="core-value highlight">{{item.expectedProfit}}</text>
+                </view>
+              </view>
+              <view class="placement-sub-row">
+                <text class="sub-info">每股{{item.perShare}}</text>
+                <text class="sub-info">配1手{{item.sharesFor10}}≈{{item.costFor10Lots}}</text>
+                <text class="sub-info">规模{{item.issueSize}}</text>
+                <text class="sub-info onehand" wx:if="{{item._oneHandMinShares > 0}}">一手党最低{{item._oneHandMinShares}}股≈{{item.oneHandMinCost}}</text>
+              </view>
             </view>
-            <view class="code-row">
-              <text class="bond-code">{{item.bondCode}}</text>
-              <text class="stock-code">{{item.stockName}}</text>
+          </view>
+        </block>
+
+        <!-- 其他Tab行 - 已上市转债 -->
+        <block wx:for="{{currentList}}" wx:key="index" wx:if="{{!showSearch && currentTab !== 'placement'}}">
+          <view class="table-row" bindtap="goToDetail" data-code="{{item.bondCode}}">
+            <view class="col-name">
+              <view class="name-row">
+                <text class="exchange-icon sh" wx:if="{{item.exchange === '沪'}}">沪</text>
+                <text class="exchange-icon sz" wx:elif="{{item.exchange === '深'}}">深</text>
+                <text class="exchange-icon bj" wx:elif="{{item.exchange === '京'}}">京</text>
+                <text class="bond-name">{{item.bondName}}</text>
+                <text class="fav-icon {{item.isFavorite ? 'active' : ''}}" catchtap="toggleFavorite" data-code="{{item.bondCode}}" data-index="{{index}}">{{item.isFavorite ? '★' : '☆'}}</text>
+              </view>
+              <view class="code-row">
+                <text class="bond-code">{{item.bondCode}}</text>
+                <text class="stock-code">{{item.stockName}}</text>
+              </view>
+            </view>
+            <view class="col-price">
+              <text class="price-main">{{item.price}}</text>
+              <text class="price-sub">{{item.stockPrice}}</text>
+            </view>
+            <view class="col-premium">
+              <text class="premium-value {{item.premiumClass}}">{{item.premium}}</text>
+            </view>
+            <view class="col-extra" wx:if="{{currentTab === 'double-low'}}">
+              <text class="extra-value highlight">{{item.doubleLow}}</text>
+            </view>
+            <view class="col-extra" wx:if="{{currentTab === 'force-redeem'}}">
+              <text class="extra-value {{item.forceRedemptionClass}}">{{item.forceRedemptionGap}}</text>
+            </view>
+            <view class="col-extra" wx:if="{{currentTab === 'discount'}}">
+              <text class="extra-value {{item.discountClass}}">{{item.discountSpace}}</text>
+            </view>
+            <view class="col-extra" wx:if="{{currentTab === 'down-revised'}}">
+              <text class="extra-value {{item.downReviseClass}}">{{item.downReviseGap}}</text>
             </view>
           </view>
-          <view class="col-price">
-            <text class="price-main">{{item.price}}</text>
-            <text class="price-sub">{{item.stockPrice}}</text>
-          </view>
-          <view class="col-premium">
-            <text class="premium-value {{item.premiumClass}}">{{item.premium}}</text>
-          </view>
-          <view class="col-extra placement-extra" wx:if="{{currentTab === 'placement'}}">
-            <view class="placement-row">
-              <text class="placement-label">含权</text>
-              <text class="placement-value highlight">{{item.hundredRight}}</text>
-            </view>
-            <view class="placement-row">
-              <text class="placement-label">一手</text>
-              <text class="placement-value">{{item.lotStock}}</text>
-            </view>
-            <view class="placement-row">
-              <text class="placement-label">安全垫</text>
-              <text class="placement-value {{item.safetyPadClass}}">{{item.safetyPad}}</text>
-            </view>
-          </view>
-          <view class="col-extra" wx:if="{{currentTab === 'double-low'}}">
-            <text class="extra-value highlight">{{item.doubleLow}}</text>
-          </view>
-          <view class="col-extra" wx:if="{{currentTab === 'force-redeem'}}">
-            <text class="extra-value {{item.forceRedemptionClass}}">{{item.forceRedemptionGap}}</text>
-          </view>
-          <view class="col-extra" wx:if="{{currentTab === 'discount'}}">
-            <text class="extra-value {{item.discountClass}}">{{item.discountSpace}}</text>
-          </view>
-          <view class="col-extra" wx:if="{{currentTab === 'down-revised'}}">
-            <text class="extra-value {{item.downReviseClass}}">{{item.downReviseGap}}</text>
-          </view>
-        </view>
+        </block>
       </view>
-    </view>
 
     <view class="empty" wx:if="{{showSearch && filteredList.length === 0}}">
       <text class="empty-text">未找到匹配的转债</text>
     </view>
     <view class="empty" wx:if="{{!showSearch && currentList.length === 0}}">
       <text class="empty-text">暂无符合条件的标的</text>
+    </view>
+  </view>
+  </view>
+
+  <!-- 配售详情弹窗 - 策略版面重设计 -->
+  <view class="modal-overlay" wx:if="{{showPendingModal && selectedPending}}" bindtap="closePendingModal">
+    <view class="modal-content pending-modal" catchtap="">
+      <view class="modal-header">
+        <text class="modal-title">{{selectedPending.stockName}} ({{selectedPending.stockCode}})</text>
+        <view class="modal-close" bindtap="closePendingModal">×</view>
+      </view>
+      <view class="modal-body">
+        <!-- 预期溢价率滑动调节 -->
+        <view class="detail-section premium-slider-section">
+          <view class="premium-slider-row">
+            <text class="detail-label-section">预期上市溢价率</text>
+            <text class="premium-slider-value">{{selectedPending._premiumRate}}%</text>
+          </view>
+          <slider min="10" max="50" step="5" value="{{selectedPending._premiumRate}}" show-value="false" backgroundColor="#D0D7DE" activeColor="#D4A017" block-size="14" bindchanging="onPremiumRateChange" />
+          <text class="premium-slider-hint">调整后安全垫和预估收益将实时更新</text>
+        </view>
+
+        <!-- 板块标签 -->
+        <view class="detail-section">
+          <view class="sector-row">
+            <text class="detail-label-section">所属板块</text>
+            <text class="sector-tag {{selectedPending.isHotSector ? 'hot' : ''}}" wx:if="{{selectedPending.sectorTag !== '--'}}">{{selectedPending.sectorTag}}{{selectedPending.isHotSector ? '🔥' : ''}}</text>
+            <text class="sector-tag" wx:else>--</text>
+          </view>
+        </view>
+
+        <!-- 发行时间轴 -->
+        <view class="detail-section">
+          <text class="detail-section-title">发行时间轴</text>
+          <view class="stage-row">
+            <view class="stage-item" wx:for="{{selectedPending.stageList}}" wx:key="index" wx:for-index="i">
+              <view class="stage-dot {{item.status}}">
+                <text class="stage-dot-icon" wx:if="{{item.status === 'done'}}">✓</text>
+                <text class="stage-dot-icon" wx:elif="{{item.status === 'current'}}">▶</text>
+                <text class="stage-dot-icon" wx:else>○</text>
+              </view>
+              <text class="stage-line" wx:if="{{i < selectedPending.stageList.length - 1}}"></text>
+              <text class="stage-name {{item.status}}">{{item.name}}</text>
+            </view>
+          </view>
+        </view>
+
+        <!-- 核心指标区 -->
+        <view class="detail-section">
+          <text class="detail-section-title">核心指标</text>
+          <view class="detail-grid">
+            <view class="detail-item highlight-box">
+              <text class="detail-label">百元含权</text>
+              <text class="detail-value highlight">{{selectedPending.cashRatio}}</text>
+            </view>
+            <view class="detail-item highlight-box">
+              <text class="detail-label">安全垫</text>
+              <text class="detail-value highlight">{{selectedPending.safetyPad}}</text>
+            </view>
+            <view class="detail-item highlight-box">
+              <text class="detail-label">预估收益(10张)</text>
+              <text class="detail-value highlight">{{selectedPending.expectedProfit}}</text>
+            </view>
+            <view class="detail-item">
+              <text class="detail-label">每股配售</text>
+              <text class="detail-value">{{selectedPending.perShare}}</text>
+            </view>
+            <view class="detail-item">
+              <text class="detail-label">配10张需</text>
+              <text class="detail-value">{{selectedPending.sharesFor10}}</text>
+            </view>
+            <view class="detail-item">
+              <text class="detail-label">登记日基准价</text>
+              <text class="detail-value">{{selectedPending.recordPrice}}</text>
+            </view>
+          </view>
+        </view>
+
+        <!-- 正股风险区 -->
+        <view class="detail-section">
+          <text class="detail-section-title">正股风险</text>
+          <view class="detail-grid">
+            <view class="detail-item">
+              <text class="detail-label">正股价</text>
+              <text class="detail-value">{{selectedPending.stockPrice}}</text>
+            </view>
+            <view class="detail-item">
+              <text class="detail-label">正股涨幅</text>
+              <text class="detail-value">{{selectedPending.stockChange}}</text>
+            </view>
+            <view class="detail-item">
+              <text class="detail-label">市净率PB</text>
+              <text class="detail-value">{{selectedPending.pb}}</text>
+            </view>
+            <view class="detail-item">
+              <text class="detail-label">vs20日均价</text>
+              <text class="detail-value {{selectedPending._stockTrendRaw > 0 ? 'positive' : selectedPending._stockTrendRaw < 0 ? 'negative' : ''}}">{{selectedPending.stockTrend}}</text>
+            </view>
+            <view class="detail-item">
+              <text class="detail-label">20日均价</text>
+              <text class="detail-value">{{selectedPending.ma20Price}}</text>
+            </view>
+          </view>
+        </view>
+
+        <!-- 发行信息区 -->
+        <view class="detail-section">
+          <text class="detail-section-title">发行信息</text>
+          <view class="detail-grid">
+            <view class="detail-item">
+              <text class="detail-label">转债名称</text>
+              <text class="detail-value">{{selectedPending.bondName}}</text>
+            </view>
+            <view class="detail-item">
+              <text class="detail-label">转债代码</text>
+              <text class="detail-value">{{selectedPending.bondCode}}</text>
+            </view>
+            <view class="detail-item">
+              <text class="detail-label">方案进展</text>
+              <text class="detail-value">{{selectedPending.progress}}</text>
+            </view>
+            <view class="detail-item">
+              <text class="detail-label">发行规模</text>
+              <text class="detail-value">{{selectedPending.issueSize}}</text>
+            </view>
+            <view class="detail-item" wx:if="{{selectedPending.rating !== '暂无'}}">
+              <text class="detail-label">信用评级</text>
+              <text class="detail-value">{{selectedPending.rating}}</text>
+            </view>
+            <view class="detail-item">
+              <text class="detail-label">股东配售率</text>
+              <text class="detail-value">{{selectedPending.shareholderRatio}}</text>
+            </view>
+            <view class="detail-item">
+              <text class="detail-label">转股价</text>
+              <text class="detail-value">{{selectedPending.conversionPrice}}</text>
+            </view>
+            <view class="detail-item">
+              <text class="detail-label">股权登记日</text>
+              <text class="detail-value copyable" bindtap="copyText" data-text="{{selectedPending.regDate}}">{{selectedPending.regDate}}</text>
+            </view>
+            <view class="detail-item" wx:if="{{selectedPending.onlineIssueSize !== '暂无'}}">
+              <text class="detail-label">网上规模</text>
+              <text class="detail-value">{{selectedPending.onlineIssueSize}}</text>
+            </view>
+            <view class="detail-item" wx:if="{{selectedPending.winRate !== '暂无'}}">
+              <text class="detail-label">中签率</text>
+              <text class="detail-value">{{selectedPending.winRate}}</text>
+            </view>
+          </view>
+        </view>
+      </view>
     </view>
   </view>
 </view>

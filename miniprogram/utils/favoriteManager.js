@@ -2,6 +2,8 @@ const config = require('../config')
 
 const STORAGE_KEY = 'favorites'
 const OPENID_KEY = 'user_openid'
+const _FAV_CACHE = { _list: null, _ts: 0 }
+const _CACHE_TTL = 5000 // 5秒内复用内存缓存，避免反复读 Storage
 
 // 开发环境判断
 const isDev = typeof __wxConfig !== 'undefined' && __wxConfig.debug
@@ -96,12 +98,18 @@ const favoriteManager = {
   },
 
   /**
-   * 获取所有自选（同步版本，从本地缓存）
+   * 获取所有自选（同步版本，带内存缓存）
    */
   getAll() {
+    const now = Date.now()
+    if (_FAV_CACHE._list && now - _FAV_CACHE._ts < _CACHE_TTL) {
+      return _FAV_CACHE._list
+    }
     try {
       const saved = wx.getStorageSync(STORAGE_KEY)
       if (saved && Array.isArray(saved)) {
+        _FAV_CACHE._list = saved
+        _FAV_CACHE._ts = now
         return saved
       }
     } catch (err) {
@@ -111,11 +119,20 @@ const favoriteManager = {
   },
 
   /**
+   * 失效内存缓存
+   */
+  _invalidateCache() {
+    _FAV_CACHE._list = null
+    _FAV_CACHE._ts = 0
+  },
+
+  /**
    * 保存到本地缓存
    */
   saveAll(list) {
     try {
       wx.setStorageSync(STORAGE_KEY, list || [])
+      this._invalidateCache()
       return true
     } catch (err) {
       console.error('Failed to save favorites:', err)
@@ -210,11 +227,36 @@ const favoriteManager = {
   },
 
   /**
-   * 判断是否已收藏
+   * 判断是否已收藏（内存缓存加速）
    */
   isFavorite(code, type = 'bond') {
     const list = this.getAll()
     return list.some(i => i.code === code && i.type === type)
+  },
+
+  /**
+   * 批量判断收藏状态（一次 getAll 查全部，避免反复读 Storage）
+   * @param {Array} items - [{ code, type }]
+   * @returns {Set<string>} 已收藏的 "code:type" 集合
+   */
+  batchIsFavorite(items) {
+    const list = this.getAll()
+    const favSet = new Set(list.map(i => i.code + ':' + i.type))
+    const result = new Set()
+    items.forEach(item => {
+      if (favSet.has(item.code + ':' + item.type)) {
+        result.add(item.code + ':' + item.type)
+      }
+    })
+    return result
+  },
+
+  /**
+   * 获取指定类型的所有收藏代码 Set（用于批量刷新）
+   */
+  getCodesByType(type) {
+    const list = this.getAll()
+    return new Set(list.filter(i => i.type === type).map(i => i.code))
   },
 
   /**

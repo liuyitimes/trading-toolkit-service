@@ -42,6 +42,27 @@
       </view>
     </view>
 
+    <!-- 发行流程时间线（优先显示！） -->
+    <view class="section" wx:if="{{detail.hasTimeline}}">
+      <view class="section-title-row">
+        <text class="section-title">发行流程</text>
+        <text class="section-badge" wx:if="{{detail.currentTimelineIdx >= 0}}">进行中</text>
+      </view>
+      <scroll-view scroll-x class="timeline-scroll" enable-flex>
+        <view class="timeline">
+          <view class="timeline-node {{item.done ? 'done' : ''}} {{item.current ? 'current' : ''}}" wx:for="{{detail.timeline}}" wx:key="step">
+            <view class="node-dot">
+              <text class="node-icon" wx:if="{{item.done}}">✓</text>
+              <text class="node-num" wx:elif="{{item.current}}">{{index + 1}}</text>
+            </view>
+            <text class="node-step">{{item.step}}</text>
+            <text class="node-date">{{item.date}}</text>
+            <view class="current-tag" wx:if="{{item.current}}">当前</view>
+          </view>
+        </view>
+      </scroll-view>
+    </view>
+
     <!-- 基本信息 -->
     <view class="section">
       <text class="section-title">基本信息</text>
@@ -71,23 +92,6 @@
           <text class="info-value">{{detail.listDate}}</text>
         </view>
       </view>
-    </view>
-
-    <!-- 发行流程时间线 -->
-    <view class="section" wx:if="{{detail.hasTimeline}}">
-      <text class="section-title">发行流程</text>
-      <scroll-view scroll-x class="timeline-scroll" enable-flex>
-        <view class="timeline">
-          <view class="timeline-node {{item.done ? 'done' : ''}} {{item.current ? 'current' : ''}}" wx:for="{{detail.timeline}}" wx:key="step">
-            <view class="node-dot">
-              <text class="node-icon" wx:if="{{item.done}}">✓</text>
-              <text class="node-num" wx:elif="{{item.current}}">{{index + 1}}</text>
-            </view>
-            <text class="node-step">{{item.step}}</text>
-            <text class="node-date">{{item.date}}</text>
-          </view>
-        </view>
-      </scroll-view>
     </view>
 
     <!-- 认购数据 -->

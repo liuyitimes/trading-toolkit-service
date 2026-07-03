@@ -4,16 +4,28 @@ const favoriteManager = require('../../utils/favoriteManager')
 
 Page({
   data: {
+    currentTab: 'all',
+    allList: [],
     currentList: [],
     filteredList: [],
     searchKeyword: '',
     showSearch: false,
+    selectedLof: null,
+    showLofModal: false,
+    tabStats: {
+      allCount: 0,
+      premiumCount: 0,
+      discountCount: 0,
+      pausedCount: 0
+    },
     marketSummary: {
       count: 0,
       premiumAvg: '--',
       topPremium: '--',
       positiveCount: 0,
-      pausedCount: 0
+      pausedCount: 0,
+      arbitrageCount: 0,
+      lowLiquidityCount: 0
     },
     loading: true,
     updateTime: ''
@@ -27,9 +39,13 @@ Page({
     this.refreshFavorites()
     const theme = app.getTheme()
     this.setData({ isDarkMode: theme === 'dark' })
+    this._updateTabBar(2)
+  },
+
+  _updateTabBar(index) {
     if (typeof this.getTabBar === 'function' && this.getTabBar()) {
       this.getTabBar().checkDarkMode()
-      this.getTabBar().setData({ selected: 2 })
+      this.getTabBar().setData({ selected: index })
     }
   },
 
@@ -37,6 +53,28 @@ Page({
     this.loadData().then(() => {
       wx.stopPullDownRefresh()
     })
+  },
+
+  switchTab(e) {
+    try {
+      const tab = e.currentTarget.dataset.tab
+      if (!tab) return
+      const currentList = this._filterByTab(this.data.allList, tab)
+      this.setData({
+        currentTab: tab,
+        currentList
+      })
+    } catch (err) {
+      console.error('Switch tab failed:', err)
+    }
+  },
+
+  _filterByTab(list, tab) {
+    if (tab === 'all') return list
+    if (tab === 'premium') return list.filter(i => i.premiumValue >= 5)
+    if (tab === 'discount') return list.filter(i => i.premiumValue < 0)
+    if (tab === 'paused') return list.filter(i => i.isPaused)
+    return list
   },
 
   async loadData() {
@@ -56,7 +94,8 @@ Page({
       }
 
       if (!list.length) {
-        list = this.getMockData()
+        console.error('数据加载失败')
+        list = []
       }
 
       const sortedList = list.sort((a, b) => {
@@ -78,29 +117,35 @@ Page({
       } else {
         summary.pausedCount = list.filter(item => item.limit_status === '暂停').length
       }
+      summary.arbitrageCount = formattedList.filter(i => i.canArbitrage).length
+      summary.lowLiquidityCount = formattedList.filter(i => i.lowLiquidity).length
+
+      const tabStats = {
+        allCount: formattedList.length,
+        premiumCount: formattedList.filter(i => i.premiumValue >= 5).length,
+        discountCount: formattedList.filter(i => i.premiumValue < 0).length,
+        pausedCount: formattedList.filter(i => i.isPaused).length
+      }
 
       const now = new Date()
       const updateTime = now.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })
 
       this.setData({
-        currentList: formattedList,
+        allList: formattedList,
+        currentList: this._filterByTab(formattedList, this.data.currentTab),
         marketSummary: summary,
+        tabStats,
         updateTime,
         loading: false
       })
     } catch (err) {
       console.error('Failed to load data:', err)
-      const mockList = this.getMockData()
-      const premiums = mockList.map(item => item.premium || 0)
-      const formattedList = mockList.sort((a, b) => b.premium - a.premium).map(item => this.formatLofItem(item))
       this.setData({
-        currentList: formattedList,
+        allList: [],
+        currentList: [],
         marketSummary: {
-          count: mockList.length,
-          premiumAvg: (premiums.reduce((a, b) => a + b, 0) / premiums.length).toFixed(2),
-          topPremium: Math.max(...premiums).toFixed(2),
-          positiveCount: premiums.filter(p => p > 0).length,
-          pausedCount: mockList.filter(item => item.limit_status === '暂停').length
+          count: 0, premiumAvg: '--', topPremium: '--',
+          positiveCount: 0, pausedCount: 0, arbitrageCount: 0, lowLiquidityCount: 0
         },
         updateTime: new Date().toLocaleString('zh-CN'),
         loading: false
@@ -108,19 +153,18 @@ Page({
     }
   },
 
-  getMockData() {
-    return [
-      { code: 'sh501015', name: '财通升级混合LOF', price: 4.714, valuation: 4.0755, change_pct: 2.35, premium: 15.67, consecutive_premium: 3, limit_status: '不限' },
-      { code: 'sh501026', name: '财通福享混合LOF', price: 3.502, valuation: 3.0992, change_pct: 1.89, premium: 13.00, consecutive_premium: 3, limit_status: '不限' },
-      { code: 'sh501085', name: '财通科创LOF', price: 4.548, valuation: 4.0829, change_pct: 3.21, premium: 11.39, consecutive_premium: 3, limit_status: '不限' },
-      { code: 'sz161128', name: '标普信息科技LOF', price: 7.059, valuation: 6.598, change_pct: 0.45, premium: 6.99, consecutive_premium: 19, limit_status: '暂停' },
-      { code: 'sh501096', name: '国联安科创LOF', price: 2.169, valuation: 2.0585, change_pct: 1.56, premium: 5.37, consecutive_premium: 1, limit_status: '不限' },
-      { code: 'sh501079', name: '科创大成LOF', price: 6.376, valuation: 6.0716, change_pct: 2.87, premium: 5.01, consecutive_premium: 3, limit_status: '不限' },
-      { code: 'sz161130', name: '纳斯达克100LOF', price: 4.79, valuation: 4.564, change_pct: 0.32, premium: 4.95, consecutive_premium: 19, limit_status: '暂停' },
-      { code: 'sz161125', name: '标普500LOF', price: 3.176, valuation: 3.0777, change_pct: 0.18, premium: 3.19, consecutive_premium: 19, limit_status: '暂停' },
-      { code: 'sz167301', name: '保险主题LOF', price: 0.983, valuation: 0.9662, change_pct: 0.65, premium: 1.74, consecutive_premium: 3, limit_status: '不限' },
-      { code: 'sh501312', name: '海外科技LOF', price: 2.39, valuation: 2.3495, change_pct: 0.88, premium: 1.72, consecutive_premium: 3, limit_status: '限100' }
-    ]
+  _formatAmount(val) {
+    if (!val || val <= 0) return '--'
+    if (val >= 10000) return (val / 10000).toFixed(2) + '亿'
+    if (val >= 1) return val.toFixed(1) + '万'
+    return (val * 10000).toFixed(0) + '元'
+  },
+
+  _getAmountLevel(val) {
+    if (!val || val <= 0) return ''
+    if (val >= 1000) return 'safe'
+    if (val >= 100) return 'warn'
+    return 'danger'
   },
 
   formatLofItem(item) {
@@ -132,6 +176,8 @@ Page({
     const name = item.name || '--'
     const code = item.code || '--'
     const changePct = item.change_pct || 0
+    const amount = item.amount || 0
+    const volume = item.volume || 0
 
     let exchange = ''
     if (item.exchange) {
@@ -145,23 +191,103 @@ Page({
 
     const isFavorite = favoriteManager.isFavorite(pureCode, 'lof')
 
+    const spread = valuation > 0 && price > 0
+      ? ((price - valuation) / valuation * 100).toFixed(2) + '%'
+      : '--'
+
+    // 净溢价 = 溢价率 - 申购费率(0.15%), 暂停申购时无净溢价
+    let netPremium = null
+    if (limitStatus === '暂停') {
+      netPremium = null
+    } else if (limitStatus === '限100') {
+      netPremium = premium - 0.15
+    } else {
+      netPremium = premium - 0.15
+    }
+    const netPremiumText = netPremium !== null ? (netPremium > 0 ? '+' : '') + netPremium.toFixed(2) + '%' : 'N/A'
+    const netPremiumClass = netPremium !== null ? (netPremium > 3 ? 'high' : netPremium > 0 ? '' : 'negative') : ''
+
+    // 可套利条件
+    const canArbitrage = premium >= 3 && amount >= 100 && limitStatus !== '暂停'
+    const lowLiquidity = amount > 0 && amount < 10
+    const sustainedPremium = consecutivePremium >= 5
+
+    const limitAmount = limitStatus === '限100' ? 100 : null
+
     return {
-      name,
-      code: pureCode,
-      exchange,
+      name, code: pureCode, exchange,
       priceText: typeof price === 'number' ? price.toFixed(3) : '--',
       valuationText: typeof valuation === 'number' ? valuation.toFixed(4) : '--',
-      premiumText: typeof premium === 'number' ? premium.toFixed(2) + '%' : '--',
-      premiumValue: premium,
-      consecutivePremium,
-      limitStatus,
-      isHighlight: premium > 10,
-      isHighPremium: premium > 5,
-      isPaused: limitStatus === '暂停',
+      spread, premiumText: typeof premium === 'number' ? premium.toFixed(2) + '%' : '--',
+      premiumValue: premium, consecutivePremium, limitStatus, isPaused: limitStatus === '暂停',
+      isHighlight: premium > 10, isHighPremium: premium > 5,
       changePctText: typeof changePct === 'number' ? (changePct > 0 ? '+' : '') + changePct.toFixed(2) + '%' : '--',
-      isChangeUp: changePct > 0,
-      isFavorite
+      isChangeUp: changePct > 0, isFavorite,
+      // 成交额
+      amountRaw: amount,
+      amountText: this._formatAmount(amount),
+      amountLevel: this._getAmountLevel(amount),
+      volumeText: volume ? (volume >= 10000 ? (volume / 10000).toFixed(2) + '亿' : volume.toFixed(1) + '万') : '--',
+      // 净溢价
+      netPremium, netPremiumText, netPremiumClass,
+      // 标记
+      canArbitrage, lowLiquidity, sustainedPremium,
+      limitAmount,
+      // 弹窗数据
+      detail: {
+        name: name || '--', code: pureCode, exchange: exchange || '--',
+        price: typeof price === 'number' ? price.toFixed(3) : '--',
+        valuation: typeof valuation === 'number' ? valuation.toFixed(4) : '--',
+        premium: typeof premium === 'number' ? premium.toFixed(2) + '%' : '--',
+        spread, netPremium: netPremiumText, limitStatus,
+        limitAmount: limitAmount ? (limitAmount >= 1000 ? (limitAmount / 10000).toFixed(2) + '万元' : limitAmount + '元') : '--',
+        amountText: this._formatAmount(amount),
+        volumeText: volume ? (volume >= 10000 ? (volume / 10000).toFixed(2) + '亿股' : volume.toFixed(1) + '万股') : '--',
+        consecutivePremium: consecutivePremium + '天',
+        isShenzhen: exchange === '深',
+        advice: this._getAdvice(premium, amount, limitStatus, consecutivePremium)
+      }
     }
+  },
+
+  _getAdvice(premium, amount, limitStatus, consecutivePremium) {
+    if (limitStatus === '暂停') {
+      return '申购暂停，无法套利。关注恢复申购后的溢价变化。'
+    }
+    if (premium >= 3 && amount >= 100) {
+      let advice = '✅ 溢价' + premium.toFixed(2) + '%' + (consecutivePremium >= 5 ? '（已持续' + consecutivePremium + '天）' : '')
+      advice += '，成交额充足，可考虑溢价套利。'
+      if (amount < 1000) advice += '注意当日成交额' + this._formatAmount(amount) + '，盘中需监控流动性。'
+      advice += '建议14:50后操作，申购费需一折券商(0.15%)。'
+      if (limitStatus === '限100') advice += '单账户限' + this._formatAmount(100) + '，一拖六可放大。'
+      return advice
+    }
+    if (premium > 0 && premium < 3) {
+      return '溢价仅' + premium.toFixed(2) + '%' + (premium < 0.15 ? '，不足覆盖申购费(0.15%)' : '，空间有限') + '，建议观望。'
+    }
+    if (premium < 0) {
+      const absP = Math.abs(premium)
+      if (absP > 1) {
+        return '折价' + absP.toFixed(2) + '%，折价套利需持有≥7天(赎回费0.5%)，注意净值波动风险。不建议新手操作。'
+      }
+      return '轻微折价，套利空间有限，建议观望。'
+    }
+    return '暂无明确套利信号。'
+  },
+
+  openLofDetail(e) {
+    const { index } = e.currentTarget.dataset
+    const list = this.data.currentList
+    const item = list[index]
+    if (!item) return
+    this.setData({
+      selectedLof: item.detail,
+      showLofModal: true
+    })
+  },
+
+  closeLofModal() {
+    this.setData({ showLofModal: false, selectedLof: null })
   },
 
   toggleSearch() {
@@ -211,18 +337,22 @@ Page({
   },
 
   refreshFavorites() {
-    const updatedList = this.data.currentList.map(item => ({
+    const favCodes = favoriteManager.getCodesByType('lof')
+    const updateList = (list) => list.map(item => ({
       ...item,
-      isFavorite: favoriteManager.isFavorite(item.code, 'lof')
+      isFavorite: favCodes.has(item.code)
     }))
+    const allList = updateList(this.data.allList)
+    const currentList = updateList(this.data.currentList)
     const filteredList = this.data.showSearch
-      ? updatedList.filter(item =>
+      ? currentList.filter(item =>
           item.name.toLowerCase().includes(this.data.searchKeyword.toLowerCase()) ||
           item.code.includes(this.data.searchKeyword)
         )
-      : updatedList
+      : currentList
     this.setData({
-      currentList: updatedList,
+      allList,
+      currentList,
       filteredList
     })
   }

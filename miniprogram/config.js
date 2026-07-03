@@ -8,9 +8,10 @@ module.exports = {
   },
 
   // CloudRun 后端地址
-  // 小程序真机调试时，需将 localhost 改为电脑的局域网 IP
+  // 开发者工具调试用 localhost；真机调试请在「设置」页配置电脑局域网 IP
+  // 注意：此地址为默认回退值，实际优先使用「设置」页配置的 cloudRunUrl
   development: {
-    baseUrl: 'http://192.168.125.241:8080'
+    baseUrl: 'http://localhost:8080'
   },
   production: {
     baseUrl: 'https://your-service-id.run.tcloudbase.com'

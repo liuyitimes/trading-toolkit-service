@@ -10,10 +10,10 @@
     <view class="header-card">
       <view class="header-top">
         <view class="title-row">
-          <text class="exchange-icon sh" wx:if="{{bondInfo.exchange === '沪'}}">沪</text>
-          <text class="exchange-icon sz" wx:elif="{{bondInfo.exchange === '深'}}">深</text>
-          <text class="exchange-icon bj" wx:elif="{{bondInfo.exchange === '京'}}">京</text>
-          <text class="exchange-icon hk" wx:elif="{{bondInfo.exchange === '港'}}">港</text>
+          <text class="exchange-icon sh" wx:if="{{bondInfo.exchange === '沪' || bondInfo.exchange === 'sh'}}">沪</text>
+          <text class="exchange-icon sz" wx:elif="{{bondInfo.exchange === '深' || bondInfo.exchange === 'sz'}}">深</text>
+          <text class="exchange-icon bj" wx:elif="{{bondInfo.exchange === '京' || bondInfo.exchange === 'bj'}}">京</text>
+          <text class="exchange-icon hk" wx:elif="{{bondInfo.exchange === '港' || bondInfo.exchange === 'hk'}}">港</text>
           <text class="bond-name">{{bondInfo.bondName}}</text>
         </view>
         <view class="favorite-btn {{isFavorite ? 'active' : ''}}" bindtap="toggleFavorite">
@@ -23,7 +23,7 @@
       <view class="price-row">
         <text class="price-value">{{bondInfo.price}}</text>
         <view class="stock-row" bindtap="goToStock">
-          <text class="stock-name">{{bondInfo.stockName}}</text>
+          <text class="stock-name">{{bondInfo.stockName}} ({{bondInfo.stockCode}})</text>
           <text class="stock-arrow">›</text>
         </view>
       </view>
@@ -43,6 +43,28 @@
       </view>
     </view>
 
+    <!-- 发行流程时间线（优先显示） -->
+    <view class="section" wx:if="{{bondInfo.hasTimeline}}">
+      <view class="section-title-row">
+        <text class="section-title">发行流程</text>
+        <text class="section-badge" wx:if="{{bondInfo.currentTimelineIdx >= 0}}">进行中</text>
+      </view>
+      <scroll-view scroll-x class="timeline-scroll" enable-flex>
+        <view class="timeline">
+          <view class="timeline-node {{item.done ? 'done' : ''}} {{item.current ? 'current' : ''}}" wx:for="{{bondInfo.timeline}}" wx:key="step">
+            <view class="node-dot">
+              <text class="node-icon" wx:if="{{item.done}}">✓</text>
+              <text class="node-num" wx:elif="{{item.current}}">{{index + 1}}</text>
+            </view>
+            <text class="node-step">{{item.step}}</text>
+            <text class="node-date">{{item.date}}</text>
+            <view class="current-tag" wx:if="{{item.current}}">当前</view>
+          </view>
+        </view>
+      </scroll-view>
+    </view>
+
+    <!-- 基本信息 -->
     <view class="section">
       <text class="section-title">基本信息</text>
       <view class="info-grid">
@@ -59,8 +81,16 @@
           <text class="info-value">{{bondInfo.conversionPrice}}</text>
         </view>
         <view class="info-item">
-          <text class="info-label">转股比例</text>
-          <text class="info-value">{{bondInfo.conversionRatio}}</text>
+          <text class="info-label">转股价值</text>
+          <text class="info-value">{{bondInfo.conversionValue}}</text>
+        </view>
+        <view class="info-item">
+          <text class="info-label">纯债价值</text>
+          <text class="info-value">{{bondInfo.pureBondValue}}</text>
+        </view>
+        <view class="info-item">
+          <text class="info-label">信用评级</text>
+          <text class="info-value">{{bondInfo.creditRating}}</text>
         </view>
         <view class="info-item">
           <text class="info-label">发行规模</text>
@@ -100,28 +130,6 @@
     </view>
 
     <view class="section">
-      <text class="section-title">特殊条款</text>
-      <view class="info-grid">
-        <view class="info-item">
-          <text class="info-label">回售价</text>
-          <text class="info-value">{{bondInfo.putPrice}}</text>
-        </view>
-        <view class="info-item">
-          <text class="info-label">强赎价</text>
-          <text class="info-value">{{bondInfo.callPrice}}</text>
-        </view>
-        <view class="info-item">
-          <text class="info-label">下修触发价</text>
-          <text class="info-value">{{bondInfo.downRevisePrice}}</text>
-        </view>
-        <view class="info-item">
-          <text class="info-label">纯债价值</text>
-          <text class="info-value">{{bondInfo.pureBondValue}}</text>
-        </view>
-      </view>
-    </view>
-
-    <view class="section">
       <text class="section-title">发行信息</text>
       <view class="info-grid">
         <view class="info-item full">
@@ -133,12 +141,8 @@
           <text class="info-value">{{bondInfo.industry}}</text>
         </view>
         <view class="info-item">
-          <text class="info-label">信用评级</text>
-          <text class="info-value">{{bondInfo.creditRating}}</text>
-        </view>
-        <view class="info-item full">
-          <text class="info-label">担保方式</text>
-          <text class="info-value">{{bondInfo.guarantee}}</text>
+          <text class="info-label">换手率</text>
+          <text class="info-value">{{bondInfo.turnoverRate}}</text>
         </view>
       </view>
     </view>

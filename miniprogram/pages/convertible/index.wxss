@@ -417,12 +417,546 @@
   color: #9A6700;
 }
 
+.placement-value.negative {
+  color: #CF222E;
+}
+
+/* ==================== 配售行深度 ==================== */
+.placement-row-depth {
+  display: flex;
+  align-items: flex-start;
+  padding: 20rpx;
+  border-bottom: 1rpx solid #EAEef2;
+  min-height: 70rpx;
+}
+
+.placement-row-depth:last-child {
+  border-bottom: none;
+}
+
+.placement-row-depth:active {
+  background: #F6F8FA;
+}
+
+.placement-name-col {
+  flex: 1;
+  min-width: 0;
+}
+
+.placement-progress {
+  font-size: 20rpx !important;
+  padding: 2rpx 12rpx;
+  border-radius: 10rpx;
+  background: #F6F8FA;
+  border: 1rpx solid #D0D7DE;
+  color: #59636E;
+}
+
+.placement-progress.hot {
+  background: #EBF5FF;
+  border-color: #58A6FF;
+  color: #0969DA;
+  font-weight: 600;
+}
+
+.placement-progress.warm {
+  background: #FFF8E5;
+  border-color: #D4A72C;
+  color: #9A6700;
+}
+
 .placement-value.positive {
   color: #CF222E;
 }
 
 .placement-value.negative {
   color: #1A7F37;
+}
+
+/* ==================== 配售子Tab + 排序 ==================== */
+.placement-sub-tabs {
+  background: #FFFFFF;
+  border-bottom: 1rpx solid #D0D7DE;
+}
+
+.placement-sub-row {
+  display: flex;
+  gap: 8rpx;
+  padding: 12rpx 16rpx 4rpx;
+}
+
+.placement-sub-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8rpx 6rpx;
+  border-radius: 8rpx;
+  background: #F6F8FA;
+  border: 1rpx solid transparent;
+}
+
+.placement-sub-item.active {
+  background: #EBF5FF;
+  border-color: #58A6FF;
+}
+
+.placement-sub-label {
+  font-size: 20rpx;
+  color: #818B98;
+}
+
+.placement-sub-item.active .placement-sub-label {
+  color: #0969DA;
+  font-weight: 600;
+}
+
+.placement-sub-count {
+  font-size: 24rpx;
+  font-weight: 700;
+  color: #1F2328;
+  margin-top: 2rpx;
+}
+
+.placement-sub-count.hot { color: #CF222E; }
+
+.placement-sort-row {
+  display: flex;
+  gap: 8rpx;
+  padding: 8rpx 16rpx 12rpx;
+  overflow-x: auto;
+}
+
+.sort-btn {
+  font-size: 22rpx;
+  padding: 4rpx 14rpx;
+  border-radius: 6rpx;
+  background: #F6F8FA;
+  border: 1rpx solid #D0D7DE;
+  color: #59636E;
+  flex-shrink: 0;
+}
+
+.sort-btn.active {
+  background: #EBF5FF;
+  border-color: #58A6FF;
+  color: #0969DA;
+  font-weight: 600;
+}
+
+/* ==================== 股权登记日标记 ==================== */
+.reg-badge {
+  font-size: 18rpx;
+  padding: 2rpx 10rpx;
+  border-radius: 8rpx;
+  font-weight: 600;
+  margin-left: 6rpx;
+  flex-shrink: 0;
+}
+
+.reg-badge.hot {
+  background: #FFEBE9;
+  color: #CF222E;
+  border: 1rpx solid #FFCECB;
+  animation: pulse-tag 2s ease-in-out infinite;
+}
+
+.reg-badge.warm {
+  background: #FFF8E5;
+  color: #9A6700;
+  border: 1rpx solid #D4A72C;
+}
+
+/* ==================== 评级标签 ==================== */
+.placement-rating {
+  font-size: 18rpx;
+  padding: 1rpx 8rpx;
+  border-radius: 4rpx;
+  background: #DAFBE1;
+  color: #1A7F37;
+  border: 1rpx solid #4AC26B;
+  font-weight: 500;
+}
+
+/* ==================== 配售核心指标行 ==================== */
+.risk-tag {
+  display: inline-flex;
+  align-items: center;
+  font-size: 18rpx;
+  padding: 2rpx 10rpx;
+  border-radius: 8rpx;
+  font-weight: 600;
+  flex-shrink: 0;
+  margin-left: 4rpx;
+}
+
+.risk-tag.high {
+  background: #FFEBE9;
+  color: #CF222E;
+  border: 1rpx solid #FFCECB;
+}
+
+.risk-tag.mid {
+  background: #FFF8E5;
+  color: #9A6700;
+  border: 1rpx solid #D4A72C;
+}
+
+.risk-tag.low {
+  background: #DAFBE1;
+  color: #1A7F37;
+  border: 1rpx solid #4AC26B;
+}
+
+/* ==================== 配售核心指标行 ==================== */
+.placement-core-row {
+  display: flex;
+  gap: 12rpx;
+  padding: 10rpx 0 4rpx;
+}
+
+.core-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+}
+
+.core-label {
+  font-size: 18rpx;
+  color: #818B98;
+  margin-bottom: 2rpx;
+}
+
+.core-value {
+  font-size: 26rpx;
+  font-weight: 700;
+  color: #1F2328;
+  font-family: monospace;
+}
+
+.core-value.highlight {
+  color: #D4A017;
+}
+
+.core-value.positive {
+  color: #CF222E;
+}
+
+.core-value.negative {
+  color: #1A7F37;
+}
+
+.core-value.warning {
+  color: #9A6700;
+}
+
+/* ==================== 配售次要信息行 ==================== */
+.placement-sub-row {
+  display: flex;
+  gap: 12rpx;
+  padding: 4rpx 0 0;
+  flex-wrap: wrap;
+}
+
+.sub-info {
+  font-size: 20rpx;
+  color: #818B98;
+  font-family: monospace;
+}
+
+.sub-info.onehand {
+  font-size: 22rpx;
+  color: #9A6700;
+  font-weight: 600;
+}
+
+/* ==================== 代码行价格字段 ==================== */
+.code-price {
+  font-size: 24rpx;
+  font-weight: 600;
+  color: #1F2328;
+  font-family: monospace;
+}
+
+.code-change {
+  font-size: 22rpx;
+  font-family: monospace;
+  font-weight: 600;
+}
+
+.code-change.positive {
+  color: #CF222E;
+}
+
+.code-change.negative {
+  color: #1A7F37;
+}
+
+.code-bar {
+  font-size: 20rpx;
+  color: #D0D7DE;
+}
+
+/* ==================== 阶段进度小圆点 ==================== */
+.stage-list-dot {
+  display: inline-block;
+  width: 14rpx;
+  height: 14rpx;
+  border-radius: 7rpx;
+  flex-shrink: 0;
+  margin-right: 4rpx;
+}
+
+.stage-list-dot.dot-final {
+  background: #CF222E;
+}
+
+.stage-list-dot.dot-mid {
+  background: #D4A017;
+}
+
+.stage-list-dot.dot-early {
+  background: #0969DA;
+}
+
+.stage-list-dot.dot-first {
+  background: #818B98;
+}
+
+/* ==================== 板块标签 ==================== */
+.sector-row {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.sector-tag {
+  font-size: 24rpx;
+  padding: 4rpx 16rpx;
+  border-radius: 8rpx;
+  background: #F6F8FA;
+  border: 1rpx solid #D0D7DE;
+  color: #59636E;
+  font-weight: 500;
+}
+
+.sector-tag.hot {
+  background: #FFF8E5;
+  border-color: #D4A72C;
+  color: #9A6700;
+  font-weight: 600;
+}
+
+/* ==================== 发行时间轴 ==================== */
+.stage-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 12rpx 0;
+  overflow-x: auto;
+}
+
+.stage-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  min-width: 0;
+  flex: 1;
+}
+
+.stage-dot {
+  width: 36rpx;
+  height: 36rpx;
+  border-radius: 18rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 6rpx;
+  flex-shrink: 0;
+}
+
+.stage-dot.done {
+  background: #DAFBE1;
+  border: 1rpx solid #4AC26B;
+}
+
+.stage-dot.current {
+  background: #FFF8E5;
+  border: 1rpx solid #D4A72C;
+}
+
+.stage-dot.pending {
+  background: #F6F8FA;
+  border: 1rpx solid #D0D7DE;
+}
+
+.stage-dot-icon {
+  font-size: 16rpx;
+  font-weight: 700;
+}
+
+.stage-dot.done .stage-dot-icon {
+  color: #1A7F37;
+}
+
+.stage-dot.current .stage-dot-icon {
+  color: #9A6700;
+}
+
+.stage-dot.pending .stage-dot-icon {
+  color: #818B98;
+}
+
+.stage-line {
+  position: absolute;
+  top: 18rpx;
+  left: 50%;
+  width: 100%;
+  height: 2rpx;
+  background: #D0D7DE;
+  z-index: -1;
+}
+
+.stage-name {
+  font-size: 18rpx;
+  color: #818B98;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.stage-name.done {
+  color: #1A7F37;
+  font-weight: 500;
+}
+
+.stage-name.current {
+  color: #9A6700;
+  font-weight: 700;
+}
+
+/* ==================== 溢价率滑块 ==================== */
+.premium-slider-section {
+  background: #FFF8C5;
+  border: 1rpx solid #EAC54F;
+  border-radius: 12rpx;
+  padding: 16rpx 20rpx;
+  margin-bottom: 20rpx;
+}
+
+.premium-slider-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8rpx;
+}
+
+.premium-slider-value {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: #D4A017;
+  font-family: monospace;
+}
+
+.premium-slider-hint {
+  font-size: 20rpx;
+  color: #9A6700;
+  display: block;
+  margin-top: 4rpx;
+}
+
+.detail-label-section {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #1F2328;
+}
+
+/* ==================== 配售详情弹窗 ==================== */
+.pending-modal .modal-body {
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.pending-modal .detail-section {
+  margin-bottom: 20rpx;
+}
+
+.pending-modal .detail-section-title {
+  font-size: 26rpx;
+  font-weight: 700;
+  color: #1F2328;
+  display: block;
+  margin-bottom: 12rpx;
+  padding-bottom: 8rpx;
+  border-bottom: 1rpx solid #D0D7DE;
+}
+
+.pending-modal .detail-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+}
+
+.pending-modal .detail-item {
+  width: 50%;
+  padding: 8rpx 0;
+  box-sizing: border-box;
+}
+
+.pending-modal .detail-item.highlight-box {
+  background: #FFF8C5;
+  border-radius: 6rpx;
+  padding: 8rpx 12rpx;
+  width: 50%;
+  margin-bottom: 6rpx;
+}
+
+.pending-modal .detail-label {
+  font-size: 22rpx;
+  color: #818B98;
+  display: block;
+  margin-bottom: 2rpx;
+}
+
+.pending-modal .detail-value {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #1F2328;
+}
+
+.pending-modal .detail-value.highlight {
+  color: #D4A017;
+}
+
+.pending-modal .detail-value.copyable {
+  color: #0969DA;
+  text-decoration: underline;
+}
+
+/* 暗夜模式 */
+.dark-mode .placement-sub-tabs { background: #161B22; border-color: #30363D; }
+.dark-mode .placement-sub-item { background: #0D1117; }
+.dark-mode .placement-sub-item.active { background: #0D2240; border-color: #58A6FF; }
+.dark-mode .placement-sub-label { color: #8B949E; }
+.dark-mode .placement-sub-item.active .placement-sub-label { color: #58A6FF; }
+.dark-mode .placement-sub-count { color: #E6EDF3; }
+.dark-mode .placement-sub-count.hot { color: #F85149; }
+.dark-mode .sort-btn { background: #0D1117; border-color: #30363D; color: #8B949E; }
+.dark-mode .sort-btn.active { background: #0D2240; border-color: #58A6FF; color: #58A6FF; }
+.dark-mode .reg-badge.hot { background: #4D1F1F; color: #F85149; border-color: #DA3633; }
+.dark-mode .reg-badge.warm { background: #3D2E00; color: #D29922; border-color: #9E6A03; }
+.dark-mode .placement-rating { background: #1A4D2E; color: #3FB950; border-color: #238636; }
+.dark-mode .pending-modal .detail-section-title { color: #E6EDF3; border-color: #30363D; }
+.dark-mode .pending-modal .detail-label { color: #6E7681; }
+.dark-mode .pending-modal .detail-value { color: #E6EDF3; }
+.dark-mode .pending-modal .detail-value.highlight { color: #F0C850; }
+.dark-mode .pending-modal .detail-item.highlight-box { background: #3D2E00; }
+.dark-mode .pending-modal .detail-value.copyable { color: #58A6FF; }
+
+@keyframes pulse-tag {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(1.05); }
 }
 
 .extra-value {
@@ -642,6 +1176,24 @@
 
 .dark-mode .placement-value.highlight {
   color: #F0C850;
+}
+
+.dark-mode .placement-progress {
+  background: #21262D;
+  border-color: #30363D;
+  color: #8B949E;
+}
+
+.dark-mode .placement-progress.hot {
+  background: #0D2240;
+  border-color: #58A6FF;
+  color: #58A6FF;
+}
+
+.dark-mode .placement-progress.warm {
+  background: #3D2E00;
+  border-color: #9E6A03;
+  color: #D29922;
 }
 
 .dark-mode .loading-overlay {
