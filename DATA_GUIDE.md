@@ -1,35 +1,34 @@
-# 旺财百宝箱 - 数据说明文档
+﻿# Trading Toolkit 后端 - 数据说明文档
 
 ## 一、整体架构
 
 ### 1.1 数据获取链路
 
 ```
-小程序前端 (WXML/JS)
+HTTP 请求 (Flask 路由)
     ↓
-utils/cloudApi.js (callMarket / callMarketSafe)
+services/factory.py (工厂 + 熔断 + 降级)
     ↓
+数据源层（分级降级）
 ┌─────────────────────────────────────┐
-│           数据获取层（二选一）          │
-├─────────────────────────────────────┤
-│  云函数 (cloudfunctions/market)      │
-│  Node.js + axios → 东方财富公开API   │
-├─────────────────────────────────────┤
-│  云托管 (cloudrun)                   │
-│  Python/Flask + akshare → 集思录等   │
+│  akshare (主)  → 集思录 / 东方财富   │
+│  efinance (备选) → 东方财富          │
+│  tushare (备选) → tushare           │
+│  mock (兜底) → 本地静态数据           │
 └─────────────────────────────────────┘
     ↓
-  Mock数据回退（本地静态数据）
+services/normalizer.py (字段标准化)
+    ↓
+utils/response.py (统一响应格式)
 ```
 
-### 1.2 两套后端实现
+### 1.2 数据源降级链
 
-| 方式 | 技术栈 | 数据源 | 文件位置 |
-|------|--------|--------|----------|
-| 云函数 | Node.js + axios | 东方财富公开API | `cloudfunctions/market/` |
-| 云托管 | Python + Flask + akshare | 集思录 / 东方财富 | `cloudrun/` |
+```
+akshare → efinance → tushare → mock
+```
 
-两套后端实现了相同的接口协议，前端通过配置切换。当实时API不可用时，自动回退到本地Mock数据。
+熔断器：连续失败 5 次 → 熔断 60 秒
 
 ---
 
@@ -37,8 +36,7 @@ utils/cloudApi.js (callMarket / callMarketSafe)
 
 ### 2.1 数据接口
 
-- **接口**: `overview`
-- **前端调用**: `pages/index/index.js` → `loadData()`
+- **接口**: `GET /api/v1/market/overview`
 - **返回字段**:
   ```
   convertible_bond  → 可转债市场温度
@@ -52,8 +50,8 @@ utils/cloudApi.js (callMarket / callMarketSafe)
 
 | 指标 | 说明 | 来源 |
 |------|------|------|
-| 沪市情绪分 | 0-100分，越高越热 | Mock数据（需接入真实数据） |
-| 深市情绪分 | 0-100分，越高越热 | Mock数据 |
+| 沪市情绪分 | 0-100分，越高越热 | akshare |
+| 深市情绪分 | 0-100分，越高越热 | akshare |
 | 情绪等级 | 过热/偏热/中性/偏冷/过冷 | 根据平均分计算 |
 
 **情绪等级计算公式**:
@@ -71,9 +69,9 @@ else:                  中性
 
 | 指标 | 说明 | 单位 | 来源 |
 |------|------|------|------|
-| 北向资金 | 北向资金净流入 | 亿元 | Mock数据 |
-| 沪股通 | 沪股通净流入 | 亿元 | Mock数据 |
-| 深股通 | 深股通净流入 | 亿元 | Mock数据 |
+| 北向资金 | 北向资金净流入 | 亿元 | akshare |
+| 沪股通 | 沪股通净流入 | 亿元 | akshare |
+| 深股通 | 深股通净流入 | 亿元 | akshare |
 
 ### 2.4 板块指标
 
@@ -116,21 +114,16 @@ else:                  中性
 
 ### 3.1 数据接口
 
-| 接口 | 说明 | 前端页面 |
-|------|------|----------|
-| `convertibleList` | 完整可转债列表 | - |
-| `convertibleSignals` | 可转债策略信号 | `pages/convertible/index` |
+| 接口 | 说明 |
+|------|------|
+| `GET /api/v1/convertible/list` | 完整可转债列表（支持筛选/排序/分页） |
+| `GET /api/v1/convertible/signals` | 可转债策略信号 |
+| `GET /api/v1/convertible/temperature` | 可转债市场温度 |
+| `GET /api/v1/convertible/detail/<code>` | 可转债详情 |
 
 ### 3.2 数据来源
 
-**云函数（东方财富API）**:
-```
-URL: https://datacenter-web.eastmoney.com/api/data/v1/get
-报表: RPT_BOND_CB_LIST
-字段: ALL
-```
-
-**云托管（akshare库）**:
+**akshare（集思录）**:
 ```python
 import akshare as ak
 df = ak.bond_cb_jsl()  # 集思录可转债数据
@@ -247,22 +240,14 @@ else:
 
 ### 4.1 数据接口
 
-| 接口 | 说明 | 前端页面 |
-|------|------|----------|
-| `lofList` | 完整LOF列表 | - |
-| `lofOpportunities` | LOF套利机会（溢价/折价排行） | `pages/lof/index` |
+| 接口 | 说明 |
+|------|------|
+| `GET /api/v1/lof/list` | LOF 基金列表 |
+| `GET /api/v1/lof/opportunities` | LOF 套利机会（溢价/折价排行） |
 
 ### 4.2 数据来源
 
-**云函数（东方财富API）**:
-```
-URL: https://push2.eastmoney.com/api/qt/clist/get
-分类: b:MK0404 (LOF基金分类)
-字段: f12(代码), f14(名称), f2(最新价), f3(涨跌幅),
-      f5(成交量), f6(成交额), f161(基金净值), f168(溢价率)
-```
-
-**云托管（akshare库）**:
+**akshare（东方财富）**:
 ```python
 import akshare as ak
 df = ak.fund_lof_spot_em()  # 东方财富LOF实时行情
@@ -330,7 +315,7 @@ premium_avg = sum(premiums) / len(premiums)              # 平均溢价率
 top_premium = max(premiums)                              # 最高溢价
 positive_count = sum(1 for p in premiums if p > 0)       # 溢价基金数
 positive_rate = positive_count / len(premiums) * 100     # 溢价占比(%)
-paused_count = sum(1 for item in lof_list 
+paused_count = sum(1 for item in lof_list
                    if item['申购状态'] == '暂停')        # 暂停申购数
 ```
 
@@ -340,14 +325,14 @@ paused_count = sum(1 for item in lof_list
 
 ### 5.1 数据接口
 
-| 接口 | 说明 | 前端页面 |
-|------|------|----------|
-| `hkipoList` | 全部港股IPO列表 | `pages/hkipo/index` |
-| `hkipoUpcoming` | 即将上市/申购中 | - |
+| 接口 | 说明 |
+|------|------|
+| `GET /api/v1/hkipo/list` | 全部港股IPO列表 |
+| `GET /api/v1/hkipo/upcoming` | 即将上市/申购中 |
 
 ### 5.2 数据来源
 
-- **当前状态**: Mock数据
+- **当前状态**: akshare 提供数据
 - **目标数据源**: 可接入同花顺、东方财富等港股IPO数据接口
 
 ### 5.3 核心字段
@@ -369,100 +354,76 @@ paused_count = sum(1 for item in lof_list
 
 ---
 
-## 六、前端数据处理
+## 六、Mock 数据说明
 
-### 6.1 数据调用方式
-
-前端通过 `utils/cloudApi.js` 统一调用：
-
-```javascript
-// 普通调用（异常会抛出）
-const data = await callMarket('convertibleSignals')
-
-// 安全调用（异常时返回fallback，不抛出）
-const data = await callMarketSafe('convertibleSignals', {}, null)
-```
-
-### 6.2 容错机制
-
-三级容错保障：
-1. **真实API** → 优先使用实时数据
-2. **云函数/云托管内Mock** → 接口失败时使用内置Mock
-3. **前端内置Mock** → 云函数调用失败时使用前端Mock数据
-
-### 6.3 数据格式化
-
-前端页面接收数据后会进行格式化处理：
-- 数值保留2位小数
-- 百分比添加 `%` 符号
-- 涨跌颜色区分（红涨绿跌）
-- 交易所标识
-
----
-
-## 七、Mock数据说明
-
-### 7.1 Mock数据位置
+### 6.1 Mock 数据位置
 
 | 层级 | 文件位置 |
 |------|----------|
-| 云函数 | `cloudfunctions/market/data/mock.js` |
-| 云托管 | `cloudrun/mock_data.py` |
-| 前端 | `pages/*/index.js` 内的 getMockData() |
+| 后端 | `cloudrun/mock_data.py` |
+| 数据源 | `cloudrun/services/mock_source.py` |
 
-### 7.2 Mock数据用途
+### 6.2 Mock 数据用途
 
 1. **开发调试**: 无网络或无API权限时开发调试
 2. **演示展示**: 产品演示时保证有数据展示
-3. **异常回退**: 真实API故障时保证页面正常显示
+3. **异常回退**: 真实API故障时保证页面正常显示（降级链末端）
 
-### 7.3 切换到真实数据
+### 6.3 切换到真实数据
 
-**云函数方式**: 部署云函数后自动使用东方财富API，无需配置
-
-**云托管方式**:
 ```bash
 # 部署时不设置 USE_MOCK 环境变量（默认false），即使用真实数据
-# 强制使用Mock:
+# 强制使用 Mock:
 USE_MOCK=true python app.py
 ```
 
 ---
 
-## 八、API接口清单
+## 七、API 接口清单
 
-### 云函数 action 列表
+所有接口统一前缀 `/api/v1/`，返回格式：
 
-| action | 说明 | 返回数据 |
-|--------|------|----------|
-| `overview` | 市场概览 | `{convertible_bond, lof_fund, hk_ipo, market_sentiment, fund_flow}` |
-| `convertibleList` | 可转债列表 | 数组 |
-| `convertibleSignals` | 可转债信号 | `{double_low, force_redeem, discount, down_revised}` |
-| `lofList` | LOF基金列表 | 数组 |
-| `lofOpportunities` | LOF套利机会 | `{premium, discount}` |
-| `hkipoList` | 港股IPO列表 | 数组 |
-| `hkipoUpcoming` | 即将上市IPO | 数组 |
-| `health` | 健康检查 | `{status, time}` |
+```json
+{
+  "success": true,
+  "data": { ... },
+  "meta": { "cached": true, "source": "akshare", "update_time": "..." }
+}
+```
 
-### 云托管路由列表
+### 7.1 路由列表
 
-| 路由 | 对应云函数action |
-|------|------------------|
-| `GET /api/market/overview` | overview |
-| `GET /api/convertible/list` | convertibleList |
-| `GET /api/convertible/signals` | convertibleSignals |
-| `GET /api/lof/list` | lofList |
-| `GET /api/lof/opportunities` | lofOpportunities |
-| `GET /api/hkipo/list` | hkipoList |
-| `GET /api/hkipo/upcoming` | hkipoUpcoming |
-| `GET /api/health` | health |
+| 路由 | 说明 |
+|------|------|
+| `GET /api/v1/market/overview` | 综合市场概览 |
+| `GET /api/v1/market/sentiment` | 市场情绪 |
+| `GET /api/v1/market/fund-flow` | 资金流向 |
+| `GET /api/v1/convertible/list` | 可转债列表（支持筛选/排序/分页） |
+| `GET /api/v1/convertible/signals` | 可转债信号 |
+| `GET /api/v1/convertible/temperature` | 可转债市场温度 |
+| `GET /api/v1/convertible/detail/<code>` | 可转债详情 |
+| `GET /api/v1/lof/list` | LOF 基金列表 |
+| `GET /api/v1/lof/opportunities` | LOF 套利机会 |
+| `GET /api/v1/hkipo/list` | 港股 IPO 列表 |
+| `GET /api/v1/hkipo/upcoming` | 申购中 IPO |
+| `GET/POST/DELETE /api/v1/user/favorites` | 用户自选管理 |
+| `GET /api/v1/admin/health` | 健康检查 |
+
+### 7.2 缓存策略
+
+| 接口类型 | 缓存时长 | 说明 |
+|----------|----------|------|
+| 行情列表 | 60 秒 | 可转债/LOF 列表 |
+| 套利信号 | 120 秒 | 策略信号 |
+| 市场概览 | 60 秒 | 首页综合数据 |
+| 详情 | 30 秒 | 单只可转债详情 |
 
 ---
 
-## 九、风险提示
+## 八、风险提示
 
 > ⚠️ 本工具仅供学习研究，不构成投资建议。
-> 
+>
 > - 所有数据仅供参考，请以官方渠道为准
 > - 套利策略存在交易成本、流动性等风险
 > - 历史表现不代表未来收益
