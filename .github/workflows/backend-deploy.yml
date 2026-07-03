@@ -1,0 +1,55 @@
+name: Backend Deploy to CloudBase
+
+on:
+  push:
+    branches: ['main']
+  workflow_dispatch:
+
+# 仅在 CI 通过后部署（依赖 backend-ci.yml 的测试结果）
+# 注意：CloudBase 云托管也支持「代码托管」自动部署，本工作流提供 CLI 部署方式
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # 只在 main 分支推送时运行
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install CloudBase CLI
+        run: npm install -g @cloudbase/cli
+
+      - name: Deploy to CloudBase
+        env:
+          # 在 GitHub 仓库 Settings → Secrets 中配置以下变量
+          TENCENT_SECRET_ID: ${{ secrets.TENCENT_SECRET_ID }}
+          TENCENT_SECRET_KEY: ${{ secrets.TENCENT_SECRET_KEY }}
+          ENV_ID: ${{ secrets.CLOUDBASE_ENV_ID }}
+          SERVICE_ID: ${{ secrets.CLOUDBASE_SERVICE_ID }}
+        run: |
+          # 登录 CloudBase
+          tcb login --secretId "$TENCENT_SECRET_ID" --secretKey "$TENCENT_SECRET_KEY"
+
+          # 部署云托管服务（使用 Dockerfile）
+          cd cloudrun
+          tcb run deploy \
+            --envId "$ENV_ID" \
+            --name "$SERVICE_ID" \
+            --dockerfile Dockerfile \
+            --port 8080
+
+      - name: Notify deployment status
+        if: always()
+        run: |
+          echo "部署状态: ${{ job.status }}"
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "✅ 后端已成功部署到 CloudBase"
+          else
+            echo "❌ 部署失败，请检查 Secrets 配置或 CloudBase 控制台"
+          fi
