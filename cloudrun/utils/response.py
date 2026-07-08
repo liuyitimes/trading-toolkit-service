@@ -4,7 +4,7 @@ from datetime import datetime, timezone, timedelta
 # 中国标准时间时区
 CST = timezone(timedelta(hours=8))
 
-def api_response(data, cached=False, source='akshare', cache_expire_at=None):
+def api_response(data, cached=False, source='direct', cache_expire_at=None):
     """统一成功响应"""
     return jsonify({
         'success': True,

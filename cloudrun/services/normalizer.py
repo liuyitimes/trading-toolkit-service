@@ -47,6 +47,8 @@ def normalize_lof(row: dict) -> dict:
         'consecutive_premium': int(row.get('连续溢价', 0)),
         'limit_status': str(row.get('申购状态', '')),
         'exchange': exchange,
+        'volume': round(float(row.get('成交量', 0)) / 10000, 2),
+        'amount': round(float(row.get('成交额', 0)) / 10000, 2),
     }
 
 

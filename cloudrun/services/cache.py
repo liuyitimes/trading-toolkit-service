@@ -331,6 +331,51 @@ def _background_refresh_worker(cache_key: str, fetch_func, ttl: int, refresh_key
         logger.warning(f'[CacheSWR] 后台刷新失败 {cache_key}: {e}')
 
 
+# ==================== data_status 支持（ADR-003） ====================
+
+def fetch_with_stale_fallback(cache_key: str, fetch_func, ttl: int,
+                               force_refresh: bool = False):
+    """带 stale cache 兜底的数据获取 — 返回 (data, data_status)。
+
+    data_status 枚举：
+    - fresh: 上游成功，数据为最新
+    - stale: 上游失败，返回上次成功的缓存数据
+    - unavailable: 上游失败且无缓存
+
+    与 get_with_swr 的区别：
+    - get_with_swr 有缓存立即返回（不区分 fresh/stale），后台刷新
+    - 本函数显区分 fresh/stale/unavailable，供前端显示「数据延迟」徽章
+    - force_refresh=True 时强制回源，失败则降级到 stale cache
+    """
+    cache = get_cache_manager()
+
+    if not force_refresh:
+        # 非强制刷新：先查缓存
+        cached = cache.get(cache_key)
+        if cached is not None:
+            # 有缓存，后台异步刷新（SWR），本次返回 "fresh"
+            _maybe_trigger_background_refresh(cache_key, fetch_func, ttl, 0.7)
+            return cached, 'fresh'
+
+    # 强制刷新 或 缓存未命中：同步回源
+    try:
+        data = fetch_func()
+        if data is not None:
+            cache.set(cache_key, data, ttl)
+            return data, 'fresh'
+        # fetch_func 返回 None 视为上游失败
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached, 'stale'
+        return None, 'unavailable'
+    except Exception as e:
+        logger.warning(f'[CacheFallback] {cache_key} 上游失败，降级到 stale cache: {e}')
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached, 'stale'
+        return None, 'unavailable'
+
+
 # ==================== 缓存预热 ====================
 
 def warmup_cache(items: list):

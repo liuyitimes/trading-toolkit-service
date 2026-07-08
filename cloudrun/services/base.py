@@ -60,5 +60,13 @@ class BaseDataSource(ABC):
         """获取板块资金流向数据"""
 
     @abstractmethod
+    def get_closed_end_list(self) -> list:
+        """获取封闭式基金列表（含价格、净值、折价率）"""
+
+    @abstractmethod
+    def get_closed_end_summary(self) -> dict:
+        """获取封闭式基金市场概览"""
+
+    @abstractmethod
     def health_check(self) -> dict:
         """数据源健康检查"""

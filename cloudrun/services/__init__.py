@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""services 包 — 数据源抽象层、标准化、缓存与工厂"""
+"""services 包 — 数据源抽象层、标准化、缓存与工厂（直连单源模式）"""
 
 from services.base import BaseDataSource
 from services.normalizer import (
@@ -8,10 +8,7 @@ from services.normalizer import (
     normalize_lof,
     normalize_lof_list,
 )
-from services.mock_source import MockSource
-from services.akshare_source import AkshareSource
-from services.efinance_source import EfinanceSource
-from services.tushare_source import TushareSource
+from services.direct_source import DirectSource
 from services.cache import (
     CacheManager,
     get_cache_manager,
@@ -19,10 +16,10 @@ from services.cache import (
     build_cache_key,
     is_trading_hours,
     get_with_cache_lock,
+    fetch_with_stale_fallback,
     CACHE_TTL_CONFIG,
 )
 from services.factory import (
-    CircuitBreaker,
     DataSourceFactory,
     create_default_factory,
 )
@@ -36,10 +33,7 @@ __all__ = [
     'normalize_lof',
     'normalize_lof_list',
     # 数据源实现
-    'MockSource',
-    'AkshareSource',
-    'EfinanceSource',
-    'TushareSource',
+    'DirectSource',
     # 缓存
     'CacheManager',
     'get_cache_manager',
@@ -47,9 +41,9 @@ __all__ = [
     'build_cache_key',
     'is_trading_hours',
     'get_with_cache_lock',
+    'fetch_with_stale_fallback',
     'CACHE_TTL_CONFIG',
     # 工厂
-    'CircuitBreaker',
     'DataSourceFactory',
     'create_default_factory',
 ]

@@ -1,98 +1,171 @@
-import logging
+# -*- coding: utf-8 -*-
+"""新股 IPO 数据服务（港股新股申购数据，数据源同花顺）
 
-import akshare as ak
+直连同花顺 data.10jqka.com.cn，零 akshare 依赖。
+THS 页面为 GBK 编码 HTML，用 pandas.read_html 解析表格。
+"""
+
+import io
+import logging
+import re
+
 import pandas as pd
 
+from services.http_client import ths_get
 from utils.convert import safe_float
 
 logger = logging.getLogger('trading_toolkit')
 
+_THS_IPO_URL = "https://data.10jqka.com.cn/ipo/xgsgyzq/hkstock/"
+
+
+def _fetch_ths_ipo_df():
+    """从同花顺获取港股新股申购表格。
+
+    替代 ak.stock_ipo_hk_ths()。
+    THS 页面 GBK 编码，pd.read_html 解析后取含数据的表格（通常 2 张：表头 + 数据）。
+    """
+    resp = ths_get(_THS_IPO_URL, timeout=15)
+    if resp.status_code != 200:
+        logger.warning(f'[HkIpo] 同花顺 IPO HTTP {resp.status_code}')
+        return pd.DataFrame()
+    resp.encoding = 'gbk'  # THS 页面是 GBK 编码
+    try:
+        dfs = pd.read_html(io.StringIO(resp.text))
+    except Exception as e:
+        logger.warning(f'[HkIpo] pd.read_html 解析失败: {e}')
+        return pd.DataFrame()
+    if not dfs:
+        return pd.DataFrame()
+    # 取有数据行的最后一张表（第一张通常是纯表头）
+    for df in reversed(dfs):
+        if df.shape[0] > 0:
+            return df
+    return dfs[-1]
+
+
+def _strip_html(text):
+    """剥离 HTML 标签"""
+    if not text:
+        return ''
+    return re.sub(r'<[^>]+>', '', str(text)).strip()
+
+
+def _parse_date(text):
+    """解析日期文本，统一为 YYYY-MM-DD 格式"""
+    text = _strip_html(text)
+    if not text or text == '-':
+        return ''
+    # 已经是完整日期
+    if re.match(r'^\d{4}-\d{2}-\d{2}$', text):
+        return text
+    # 月-日 格式，补充当前年份
+    m = re.match(r'^(\d{1,2})-(\d{1,2})', text)
+    if m:
+        from datetime import datetime
+        year = datetime.now().year
+        return f"{year}-{m.group(1).zfill(2)}-{m.group(2).zfill(2)}"
+    return text
+
+
+def _parse_ipo_row(row):
+    """解析单行 IPO 数据，统一字段映射"""
+    list_date = str(row.get('上市日期', ''))
+    win_rate = str(row.get('中签率（%）', ''))
+    pe_ratio = str(row.get('发行市盈率', ''))
+    industry_pe = str(row.get('行业市盈率', ''))
+    apply_code = _strip_html(row.get('申购代码', ''))
+    apply_date = _parse_date(row.get('申购日期', ''))
+    list_date_parsed = _parse_date(list_date)
+    pay_date = _parse_date(row.get('中签缴款日期', ''))
+
+    pe_val = safe_float(pe_ratio.replace('-', '0') if pe_ratio else 0, 0)
+    ind_val = safe_float(industry_pe.replace('-', '0') if industry_pe else 0, 0)
+
+    # 状态推断
+    if list_date_parsed and list_date != '-':
+        status = 'listed'
+    elif apply_date:
+        status = 'upcoming'
+    else:
+        status = 'pending'
+
+    return {
+        'code': str(row.get('股票代码', '')),
+        'name': str(row.get('股票简称', '')),
+        'apply_code': apply_code,
+        'ipo_price': safe_float(row.get('发行价格', 0), 0),
+        'issue_total': safe_float(row.get('发行总数（万股）', 0), 0),
+        'online_issue': safe_float(row.get('网上发行（万股）', 0), 0),
+        'apply_limit': safe_float(row.get('申购上限（万股）', 0), 0),
+        'top_value': safe_float(row.get('顶格申购需配市值（万元）', 0), 0),
+        'apply_date': apply_date,
+        'pay_date': pay_date,
+        'list_date': list_date_parsed,
+        'win_rate': _strip_html(win_rate) if win_rate != '-' else '',
+        'pe_ratio': pe_ratio if pe_ratio != '-' else '',
+        'industry_pe': industry_pe if industry_pe != '-' else '',
+        'pe_diff': round(pe_val - ind_val, 2),
+        'first_day_gain': str(row.get('首日最高涨幅', '')) if str(row.get('首日最高涨幅', '')) != '-' else '',
+        'plate_gain': str(row.get('打新收益（元）', '')) if str(row.get('打新收益（元）', '')) != '-' else '',
+        'continuous_days': str(row.get('连板天数', '')) if str(row.get('连板天数', '')) != '-' else '',
+        'status': status,
+    }
+
 
 def get_hk_ipo_list():
-    """获取港股IPO列表"""
+    """获取新股 IPO 列表"""
     try:
-        df = ak.stock_ipo_hk_ths()
+        df = _fetch_ths_ipo_df()
         if df is None or df.empty:
             return []
-
-        result = []
-        for _, row in df.iterrows():
-            code = str(row.get('股票代码', ''))
-            name = str(row.get('股票简称', ''))
-            ipo_price = 0
-            try:
-                ipo_price = float(row.get('发行价格', 0))
-            except (ValueError, TypeError):
-                pass
-
-            apply_date = str(row.get('申购日期', ''))
-            list_date = str(row.get('上市日期', ''))
-            win_rate = str(row.get('中签率（%）', ''))
-
-            result.append({
-                'code': code,
-                'name': name,
-                'ipo_price': ipo_price,
-                'apply_date': apply_date,
-                'list_date': list_date if list_date != '-' else '',
-                'win_rate': win_rate if win_rate != '-' else '',
-                'pe_ratio': str(row.get('发行市盈率', '')),
-                'industry_pe': str(row.get('行业市盈率', '')),
-            })
-        return result
+        return [_parse_ipo_row(row) for _, row in df.iterrows()]
     except Exception as e:
-        logger.warning(f'获取港股IPO列表失败: {e}')
+        logger.warning(f'获取新股IPO列表失败: {e}')
         return []
 
 
 def get_hk_ipo_upcoming():
-    """获取申购中的港股IPO"""
+    """获取申购中的新股"""
     try:
-        df = ak.stock_ipo_hk_ths()
+        df = _fetch_ths_ipo_df()
         if df is None or df.empty:
             return []
-
-        # 筛选未上市的（上市日期为 "-" 的）
-        upcoming = df[df['上市日期'].astype(str) == '-'].head(10)
+        upcoming = df[df['上市日期'].astype(str) == '-'].head(20)
         if upcoming.empty:
             return []
-
-        result = []
-        for _, row in upcoming.iterrows():
-            ipo_price = 0
-            try:
-                ipo_price = float(row.get('发行价格', 0))
-            except (ValueError, TypeError):
-                pass
-
-            result.append({
-                'code': str(row.get('股票代码', '')),
-                'name': str(row.get('股票简称', '')),
-                'ipo_price': ipo_price,
-                'apply_date': str(row.get('申购日期', '')),
-                'lot_size': 0,
-            })
-        return result
+        return [_parse_ipo_row(row) for _, row in upcoming.iterrows()]
     except Exception as e:
-        logger.warning(f'获取即将上市港股IPO失败: {e}')
+        logger.warning(f'获取即将上市新股失败: {e}')
         return []
 
 
-def get_hk_ipo_summary():
-    """获取港股打新市场概览"""
+def get_hk_ipo_detail(code):
+    """获取指定新股 IPO 详情"""
     try:
-        df = ak.stock_ipo_hk_ths()
+        items = get_hk_ipo_list()
+        for item in items:
+            if item.get('code') == str(code):
+                return item
+        return None
+    except Exception as e:
+        logger.warning(f'获取新股IPO详情失败: {e}')
+        return None
+
+
+def get_hk_ipo_summary():
+    """获取新股申购市场概览"""
+    try:
+        df = _fetch_ths_ipo_df()
         if df is None or df.empty:
             return {'upcoming_count': 0, 'recent_count': 0, 'total': 0}
-
         upcoming = df[df['上市日期'].astype(str) == '-']
         listed = df[df['上市日期'].astype(str) != '-']
-
         return {
             'upcoming_count': int(upcoming.shape[0]),
             'recent_count': int(listed.head(10).shape[0]),
             'total': int(df.shape[0]),
         }
     except Exception as e:
-        logger.warning(f'获取港股打新概览失败: {e}')
+        logger.warning(f'获取新股申购概览失败: {e}')
         return {'error': str(e)}

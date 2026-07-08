@@ -1,11 +1,30 @@
-import logging
+# -*- coding: utf-8 -*-
+"""可转债数据服务 — 直连 HTTP（新浪 + 东财），零 akshare 依赖
 
-import akshare as ak
+数据源：
+  - 新浪可转债行情：vip.stock.finance.sina.com.cn（实时价格，不封 IP）
+  - 东方财富可转债指标：datacenter-web.eastmoney.com（转股指标，走 em_get 限流）
+  - 集思录待发转债：www.jisilu.cn（待发/配售数据，POST 请求）
+"""
+
+import json
+import logging
+import re
+
 import pandas as pd
 
+from services.http_client import sina_get, em_get, jsl_post
 from utils.convert import safe_float
 
 logger = logging.getLogger('trading_toolkit')
+
+# ==================== 上游 API URL ====================
+
+_SINA_BOND_LIST_URL = "http://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeDataSimple"
+_SINA_BOND_COUNT_URL = "http://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeStockCountSimple"
+_EM_BOND_LIST_URL = "https://datacenter-web.eastmoney.com/api/data/v1/get"
+
+# ==================== 工具函数 ====================
 
 
 def get_exchange_by_code(code):
@@ -20,40 +39,96 @@ def get_exchange_by_code(code):
     return ''
 
 
+def _parse_sina_symbol(symbol):
+    """解析新浪 symbol（如 sh110073）得到纯代码"""
+    symbol = str(symbol)
+    if symbol.startswith(('sh', 'sz', 'bj')):
+        return symbol[2:]
+    return symbol
+
+
+# ==================== 上游数据获取（直连 HTTP） ====================
+
+
 def _get_sina_bonds():
-    """从新浪源获取实时可转债行情（320+条）"""
+    """从新浪源获取实时可转债行情（320+条）
+
+    替代 ak.bond_zh_hs_cov_spot()，直连新浪财经 API。
+    使用 Market_Center.getHQNodeDataSimple + node=hskzz_z，分页拉取。
+    """
     try:
-        df = ak.bond_zh_hs_cov_spot()
-        if df is None or df.empty:
+        # 先获取总数计算页数
+        try:
+            count_resp = sina_get(_SINA_BOND_COUNT_URL,
+                                  params={'node': 'hskzz_z'}, timeout=10)
+            total = int(count_resp.text.strip().strip('"') or '0')
+            pages = (total // 80) + 1 if total else 5
+        except Exception:
+            pages = 5  # 默认拉 5 页
+
+        all_rows = []
+        for page in range(1, pages + 1):
+            params = {
+                'page': str(page),
+                'num': '80',
+                'sort': 'symbol',
+                'asc': '1',
+                'node': 'hskzz_z',
+                '_s_r_a': 'page',
+            }
+            resp = sina_get(_SINA_BOND_LIST_URL, params=params, timeout=10)
+            if resp.status_code != 200:
+                continue
+            text = resp.text.strip()
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError:
+                try:
+                    data = json.loads(text[text.index('['):text.rindex(']') + 1])
+                except (ValueError, json.JSONDecodeError):
+                    continue
+            if isinstance(data, list) and data:
+                all_rows.extend(data)
+
+        if not all_rows:
             return None
-        return df
+        df = pd.DataFrame(all_rows)
+        return df if not df.empty else None
     except Exception as e:
-        logger.warning(f'获取新浪可转债数据失败: {e}')
+        logger.warning(f'[SinaBond] 获取新浪可转债数据失败: {e}')
         return None
 
 
 def _get_em_bonds():
-    """从东方财富获取可转债转股指标（1000+条，含溢价率/转股价值/评级）"""
+    """从东方财富获取可转债转股指标（1000+条，含溢价率/转股价值/评级）
+
+    替代 ak.bond_zh_cov()，直连东财数据中心 API，走 em_get 限流。
+    """
+    params = {
+        "reportName": "RPT_BOND_CB_LIST",
+        "columns": "ALL",
+        "source": "WEB",
+        "client": "WEB",
+        "pageSize": "500",
+        "sortColumns": "PUBLIC_START_DATE",
+        "sortTypes": "-1",
+    }
     try:
-        df = ak.bond_zh_cov()
-        if df is None or df.empty:
+        resp = em_get(_EM_BOND_LIST_URL, params=params, timeout=15)
+        if resp.status_code != 200:
+            logger.warning(f'[EmBond] HTTP {resp.status_code}')
             return None
-        return df
+        d = resp.json()
+        if not (d.get("result") and d["result"].get("data")):
+            return None
+        df = pd.DataFrame(d["result"]["data"])
+        return df if not df.empty else None
     except Exception as e:
-        logger.warning(f'获取东方财富可转债数据失败: {e}')
+        logger.warning(f'[EmBond] 获取东方财富可转债数据失败: {e}')
         return None
 
 
-def _parse_sina_symbol(symbol):
-    """解析新浪 symbol（如 sh110073）得到纯代码"""
-    symbol = str(symbol)
-    if symbol.startswith('sh'):
-        return symbol[2:]
-    elif symbol.startswith('sz'):
-        return symbol[2:]
-    elif symbol.startswith('bj'):
-        return symbol[2:]
-    return symbol
+# ==================== 数据合并 ====================
 
 
 def _merge_bond_data():
@@ -90,38 +165,49 @@ def _merge_bond_data():
         return None
 
     # 合并东方财富的转股指标
+    # EM API 返回英文列名，映射如下：
+    #   SECURITY_CODE→债券代码, CONVERT_STOCK_CODE→正股代码,
+    #   SECURITY_SHORT_NAME→正股简称, CONVERT_STOCK_PRICE→正股价,
+    #   TRANSFER_PRICE→转股价, TRANSFER_VALUE→转股价值,
+    #   TRANSFER_PREMIUM_RATIO→转股溢价率(实测返回占位值100.0，需自行计算),
+    #   RATING→信用评级, ACTUAL_ISSUE_SCALE→发行规模, LISTING_DATE→上市时间
     em_df = _get_em_bonds()
     if em_df is not None and not em_df.empty:
         em_map = {}
         for _, row in em_df.iterrows():
-            code = str(row.get('债券代码', ''))
+            code = str(row.get('SECURITY_CODE', ''))
             em_map[code] = {
-                'stock_code': str(row.get('正股代码', '')),
-                'stock_name': str(row.get('正股简称', '')),
-                'stock_price': safe_float(row.get('正股价', 0)),
-                'conversion_price': safe_float(row.get('转股价', 0)),
-                'conversion_value': safe_float(row.get('转股价值', 0)),
-                'premium_rate': safe_float(row.get('转股溢价率', 0)),
-                'rating': str(row.get('信用评级', '')),
-                'issue_size': safe_float(row.get('发行规模', 0)),
-                'list_date': str(row.get('上市时间', '')),
+                'stock_code': str(row.get('CONVERT_STOCK_CODE', '')),
+                'stock_name': str(row.get('SECURITY_SHORT_NAME', '')),
+                'stock_price': safe_float(row.get('CONVERT_STOCK_PRICE', 0)),
+                'conversion_price': safe_float(row.get('TRANSFER_PRICE', 0)),
+                'conversion_value': safe_float(row.get('TRANSFER_VALUE', 0)),
+                'rating': str(row.get('RATING', '')),
+                'issue_size': safe_float(row.get('ACTUAL_ISSUE_SCALE', 0)),
+                'list_date': str(row.get('LISTING_DATE', '')),
             }
 
         for col in ['stock_code', 'stock_name', 'stock_price', 'conversion_price',
-                     'conversion_value', 'premium_rate', 'rating',
+                     'conversion_value', 'rating',
                      'issue_size', 'list_date']:
             df[col] = df['bond_code'].map(lambda c: em_map.get(c, {}).get(col, None if col in ['stock_name', 'rating', 'list_date', 'stock_code'] else 0))
 
-        # 填充 NaN（String 列 map 不到会变成 NaN）
+        # 填充 NaN
         for col in ['stock_code', 'stock_name', 'rating', 'list_date']:
             df[col] = df[col].fillna('')
 
-        # 计算双低 = 实时价格 + 溢价率
+        # EM 的 TRANSFER_PREMIUM_RATIO 实测返回占位值 100.0（CURRENT_BOND_PRICE/CONVERT_STOCK_PRICE 均为 None），
+        # 因此用新浪实时价格 + EM 转股价值自行计算溢价率：
+        #   premium_rate = (bond_price - conversion_value) / conversion_value * 100
         for idx, row in df.iterrows():
-            pr = row.get('premium_rate', 0)
-            if pr and pr != 0 and row['price'] != 0:
-                df.at[idx, 'double_low'] = round(row['price'] + pr, 2)
+            price = row.get('price', 0)
+            cv = row.get('conversion_value', 0)
+            if price > 0 and cv > 0:
+                pr = round((price - cv) / cv * 100, 2)
+                df.at[idx, 'premium_rate'] = pr
+                df.at[idx, 'double_low'] = round(price + pr, 2)
             else:
+                df.at[idx, 'premium_rate'] = 0
                 df.at[idx, 'double_low'] = 0
 
     else:
@@ -137,6 +223,9 @@ def _merge_bond_data():
     return df
 
 
+# ==================== 公开接口（保持函数签名不变） ====================
+
+
 def get_market_temperature():
     """获取可转债市场温度"""
     try:
@@ -144,11 +233,23 @@ def get_market_temperature():
         if df is None or df.empty:
             return None
 
-        valid = df[df['premium_rate'] != 0]
+        # 过滤无效数据，避免异常值污染中位数：
+        # - premium_rate=0：无转股数据
+        # - conversion_value<50：EM 数据异常（正常转股价值 50-300，低于 50 说明数据错误）
+        # - price>500 或 price<90：异常价格转债（退市债、妖债）
+        # - premium_rate>100 或 <-50：异常溢价率（cv 数据错误导致的虚高 premium）
+        valid = df[
+            (df['premium_rate'] != 0) &
+            (df['conversion_value'] >= 50) &
+            (df['price'] <= 500) &
+            (df['price'] >= 90) &
+            (df['premium_rate'] >= -50) &
+            (df['premium_rate'] <= 100)
+        ]
         if valid.empty:
             return None
 
-        price_median = float(df['price'].median())
+        price_median = float(valid['price'].median())
         premium_median = float(valid['premium_rate'].median())
         double_low_median = float(valid['double_low'].median())
 
@@ -161,10 +262,13 @@ def get_market_temperature():
 
         return {
             'count': int(len(df)),
-            'price_min': round(float(df['price'].min()), 2),
-            'price_max': round(float(df['price'].max()), 2),
+            'valid_count': int(len(valid)),
+            'price_min': round(float(valid['price'].min()), 2),
+            'price_max': round(float(valid['price'].max()), 2),
             'price_median': round(price_median, 2),
             'premium_median': round(premium_median, 2),
+            'premium_p25': round(float(valid['premium_rate'].quantile(0.25)), 2),
+            'premium_p75': round(float(valid['premium_rate'].quantile(0.75)), 2),
             'double_low_median': round(double_low_median, 1),
             'market_status': market_status,
             'source': 'sina+em',
@@ -239,6 +343,35 @@ def get_convertible_bond_detail(code: str) -> dict:
             'amount': safe_float(row.get('amount', 0)),
         }
 
+        # 补充 EM 详情字段（申购日期/中签率等）
+        # EM API 英文列名映射：
+        #   SECURITY_CODE→债券代码, ACTUAL_ISSUE_SCALE→发行规模,
+        #   PUBLIC_START_DATE→申购日期, CORRECODE→申购代码,
+        #   ONLINE_GENERAL_LWR→中签率, ONLINE_GENERAL_AAU→申购上限,
+        #   EXPIRE_DATE→到期日
+        try:
+            em_df = _get_em_bonds()
+            if em_df is not None and not em_df.empty:
+                matched_em = em_df[em_df['SECURITY_CODE'].astype(str) == str(code)]
+                if not matched_em.empty:
+                    bond_row = matched_em.iloc[0]
+                    extra_fields = {
+                        'issue_size': safe_float(bond_row.get('ACTUAL_ISSUE_SCALE', 0)),
+                        'apply_date': str(bond_row.get('PUBLIC_START_DATE', '')),
+                        'lottery_rate': safe_float(bond_row.get('ONLINE_GENERAL_LWR', 0)),
+                        'apply_code': str(bond_row.get('CORRECODE', '')),
+                        'apply_limit': safe_float(bond_row.get('ONLINE_GENERAL_AAU', 0)),
+                        'maturity_date': str(bond_row.get('EXPIRE_DATE', '')),
+                    }
+                    for k, v in extra_fields.items():
+                        if v not in (None, '', 0):
+                            result[k] = v
+        except Exception:
+            pass
+
+        if not result.get('maturity_date'):
+            result['maturity_date'] = ''
+
         return result
     except Exception as e:
         logger.warning(f'获取可转债详情失败: {e}')
@@ -252,7 +385,9 @@ def get_convertible_bond_signals():
         if df is None or df.empty:
             return None
 
-        valid = df[df['premium_rate'] != 0].copy()
+        # 过滤无效数据：premium_rate=0（无转股数据）或 conversion_value<10（EM 数据异常）
+        # 当 cv 极小时（如 3.17），premium_rate 会异常大（如 2250%），污染中位数
+        valid = df[(df['premium_rate'] != 0) & (df['conversion_value'] >= 10)].copy()
         if valid.empty:
             return {'double_low': [], 'force_redeem': [], 'discount': [], 'down_revised': []}
 
@@ -300,17 +435,12 @@ def get_convertible_bond_signals():
         return None
 
 
-def get_pending_bonds():
-    """获取待发/配售可转债列表（集思录数据源）
+# ==================== 待发/配售可转债（集思录，已有直连逻辑） ====================
 
-    数据来源：集思录待发转债页面
-    - 包含已发行公告（申购中/待上市）和审批中（同意注册/上市委通过/交易所受理）的转债
-    - 返回正股信息 + 配售关键数据
-    """
+
+def get_pending_bonds():
+    """获取待发/配售可转债列表（集思录数据源）"""
     try:
-        # 尝试从 akshare 获取集思录待发转债数据
-        # bond_cb_jsl 返回的数据中包含一些待发转债信息，但不全
-        # 更完整的数据需要通过集思录 pre_list API 获取
         rows = _fetch_jisilu_pre_list()
         if rows:
             return rows
@@ -320,24 +450,15 @@ def get_pending_bonds():
 
 
 def _fetch_jisilu_pre_list():
-    """从集思录API获取待发转债列表"""
-    import requests
-    import json
-
+    """从集思录API获取待发转债列表（使用 http_client.jsl_post）"""
     url = 'https://www.jisilu.cn/data/cbnew/pre_list/'
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Referer': 'https://www.jisilu.cn/web/data/cb/pre',
-        'X-Requested-With': 'XMLHttpRequest',
-    }
     payload = {
         'page': 1,
         'rp': 100,
         '_': ''
     }
-
     try:
-        resp = requests.post(url, data=payload, headers=headers, timeout=10)
+        resp = jsl_post(url, data=payload, timeout=10)
         if resp.status_code == 200:
             result = resp.json()
             rows = result.get('rows', [])
@@ -349,9 +470,7 @@ def _fetch_jisilu_pre_list():
 
 
 def _calc_strategy_score(stock_cash_ratio, safety_pad, issue_size):
-    """计算策略综合评分（0-100）
-    权重：百元含权45% + 安全垫35% + 发行规模20%
-    """
+    """计算策略综合评分（0-100）"""
     cash_score = min(stock_cash_ratio / 30, 1) * 45
     safety_score = min(safety_pad / 10, 1) * 35
     if issue_size <= 2:
@@ -364,9 +483,7 @@ def _calc_strategy_score(stock_cash_ratio, safety_pad, issue_size):
 
 
 def _calc_placement_score(issue_size, float_shares, safety_pad):
-    """配售三因子评分 0-100
-    权重：发行规模30% + 流通盘40% + 安全垫30%
-    """
+    """配售三因子评分 0-100"""
     size_score = max(0, 1 - issue_size / 10) * 30
     float_score = (1 - float_shares / issue_size) * 40 if issue_size > 0 else 0
     safety_score = min(safety_pad / 10, 1) * 30
@@ -374,7 +491,6 @@ def _calc_placement_score(issue_size, float_shares, safety_pad):
 
 
 def _get_rating_by_score(score):
-    """根据评分映射评级"""
     if score >= 70:
         return 'recommend'
     if score >= 40:
@@ -383,7 +499,6 @@ def _get_rating_by_score(score):
 
 
 def _get_risk_level(safety_pad):
-    """以安全垫判定风险等级"""
     if safety_pad < 3:
         return 'high'
     elif safety_pad > 8:
@@ -395,27 +510,7 @@ DEFAULT_PREMIUM_RATE = 0.2
 
 
 def _normalize_jisilu_pre_list(rows):
-    """标准化集思录待发转债数据
-
-    集思录字段（2026 版）：
-      progress_nm     方案进展名称（如 "2026-06-30上市"）
-      progress_full   完整进展历程文本
-      amount          发行规模(亿)
-      rating_cd       评级
-      ration_rt       股东配售率(%)
-      convert_price   转股价
-      price           正股价
-      increase_rt     正股涨幅(%)
-      pb              正股PB
-      ration          每股配售(元)
-      apply10         配售10张所需股数
-      record_dt       股权登记日
-      record_price    登记日基准价
-      cb_amount       百元含权（集思录已预计算）
-      ma20_price      20日均价
-      online_amount   网上发行规模(亿)
-      lucky_draw_rt   中签率(%)
-    """
+    """标准化集思录待发转债数据"""
     result = []
     for item in rows:
         cell = item.get('cell', {})
@@ -439,7 +534,6 @@ def _normalize_jisilu_pre_list(rows):
             stock_trend = round((stock_price - ma20_price) / ma20_price * 100, 2)
 
         issue_size = safe_float(cell.get('amount', 0))
-        # 流通盘计算（设计稿 2026-07-02-placement-rating-design.md）
         online_amount = safe_float(cell.get('online_amount', 0))
         ration_rt = safe_float(cell.get('ration_rt', 0))
         if online_amount > 0:
@@ -475,11 +569,9 @@ def _normalize_jisilu_pre_list(rows):
             'apply_code': str(cell.get('apply_cd', '')),
             'ration_code': str(cell.get('ration_cd', '')),
             'status': _get_bond_status_by_progress(progress_text),
-            # 新透传字段（集思录已返回但之前被忽略）
             'stock_cash_ratio': stock_cash_ratio,
             'record_price': record_price,
             'ma20_price': ma20_price,
-            # 补算衍生字段
             'expected_profit': expected_profit,
             'safety_pad': safety_pad,
             'stock_trend': stock_trend,
@@ -492,13 +584,9 @@ def _normalize_jisilu_pre_list(rows):
 
 
 def _get_bond_status_by_progress(progress):
-    """将方案进展映射为状态
-
-    优先用 progress_nm（最新阶段名称）判断；若为空则回退到 progress_full（历程文本）。
-    """
+    """将方案进展映射为状态"""
     if not progress:
         return '--'
-    # 顺序很重要：先判断更具体的阶段
     if '申购' in progress or '发行公告' in progress:
         return '申购中'
     if '上市' in progress:

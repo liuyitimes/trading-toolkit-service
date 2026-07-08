@@ -22,6 +22,7 @@ from services.cache import (
     get_with_swr,
     warmup_cache,
 )
+from services.lof_arbitrage import get_arbitrage_prediction as _get_lof_arbitrage_prediction
 from utils.response import api_response, api_error, ErrorCode
 from utils.limiting import limit
 from utils.logging import setup_logging
@@ -34,7 +35,7 @@ CORS(app)
 # 结构化日志
 logger = setup_logging(app)
 
-# 数据源工厂（akshare → mock 降级链）
+# 数据源工厂（直连单源模式）
 factory = create_default_factory()
 
 # 缓存管理器
@@ -361,6 +362,45 @@ def lof_summary():
     return api_response(data, source=source, cached=cached)
 
 
+@app.route('/api/v1/lof/<code>/share-history')
+@limit(60)
+def lof_share_history(code):
+    """LOF 基金场内份额历史（7 日）"""
+    from services.lof_arbitrage import fetch_share_history
+    current_amount = request.args.get('amount', 0, type=float)
+    current_premium = request.args.get('premium', 0, type=float)
+    try:
+        result = fetch_share_history(code, current_amount, current_premium)
+        if not result or not result.get('history'):
+            return api_error('NOT_FOUND', f'LOF {code} 份额历史数据为空', 404)
+        return api_response(result, source=result.get('source', 'unknown'), cached=False)
+    except Exception as e:
+        logger.error(f'LOF {code} 份额历史异常: {e}')
+        return api_error(*ErrorCode.DATA_SOURCE_ERROR)
+
+
+@app.route('/api/v1/lof/<code>/arbitrage-predict')
+@limit(60)
+def lof_arbitrage_predict(code):
+    """LOF 套利资金预测（7 日数据 + 明日预测 + 出逃风险）"""
+    current_amount = request.args.get('amount', 0, type=float)
+    current_premium = request.args.get('premium', 0, type=float)
+    limit_status = request.args.get('limit_status', '不限')
+    limit_amount = request.args.get('limit_amount', 0, type=float)
+    try:
+        result = _get_lof_arbitrage_prediction(
+            code=code,
+            current_amount=current_amount,
+            current_premium=current_premium,
+            limit_status=limit_status,
+            limit_amount=limit_amount,
+        )
+        return api_response(result, source=result.get('data_source', 'unknown'), cached=False)
+    except Exception as e:
+        logger.error(f'LOF {code} 套利预测异常: {e}')
+        return api_error(*ErrorCode.DATA_SOURCE_ERROR)
+
+
 # ==================== 港股 IPO API ====================
 
 @app.route('/api/v1/hkipo/list')
@@ -399,6 +439,44 @@ def hkipo_summary():
     return api_response(data, source=source, cached=cached)
 
 
+@app.route('/api/v1/hkipo/detail/<code>')
+@limit(60)
+def hkipo_detail(code):
+    """港股 IPO 详情"""
+    force = request.args.get('refresh', '').lower() == 'true'
+    data, source, cached = fetch_with_cache(
+        'hk_ipo_detail', 'get_hk_ipo_detail', code=code, force_refresh=force)
+    if data is None:
+        return api_error('NOT_FOUND', '未找到该新股信息', 404)
+    return api_response(data, source=source, cached=cached)
+
+
+# ==================== 封闭式基金 API ====================
+
+@app.route('/api/v1/closed-end/list')
+@limit(60)
+def closed_end_list():
+    """封闭式基金列表"""
+    force = request.args.get('refresh', '').lower() == 'true'
+    data, source, cached = fetch_with_cache(
+        'closed_end_list', 'get_closed_end_list', force_refresh=force)
+    if data is None:
+        return api_error(*ErrorCode.DATA_SOURCE_ERROR)
+    return api_response(data, source=source, cached=cached)
+
+
+@app.route('/api/v1/closed-end/summary')
+@limit(60)
+def closed_end_summary():
+    """封闭式基金市场概览"""
+    force = request.args.get('refresh', '').lower() == 'true'
+    data, source, cached = fetch_with_cache(
+        'closed_end_summary', 'get_closed_end_summary', force_refresh=force)
+    if data is None:
+        return api_error(*ErrorCode.DATA_SOURCE_ERROR)
+    return api_response(data, source=source, cached=cached)
+
+
 # ==================== 管理接口 ====================
 
 @app.route('/api/v1/admin/health')
@@ -407,31 +485,19 @@ def admin_health():
     sources_status = {}
     for name in factory._sources:
         source = factory.get_source(name)
-        breaker = factory._circuit_breakers.get(name)
         try:
             health = source.health_check()
-            sources_status[name] = {
-                **health,
-                'circuit_breaker': {
-                    'state': breaker.state if breaker else 'unknown',
-                    'failure_count': breaker.failure_count if breaker else 0,
-                }
-            }
+            sources_status[name] = health
         except Exception as e:
             sources_status[name] = {
                 'status': 'error',
                 'error': str(e),
-                'circuit_breaker': {
-                    'state': breaker.state if breaker else 'unknown',
-                    'failure_count': breaker.failure_count if breaker else 0,
-                }
             }
 
     from models.database import DATABASE_URL
     return api_response({
         'status': 'ok',
         'primary_source': factory._primary_name,
-        'fallback_chain': factory._fallback_chain,
         'cache_backend': cache.backend_type,
         'sources': sources_status,
         'database': {

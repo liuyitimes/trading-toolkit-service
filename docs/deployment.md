@@ -85,9 +85,9 @@ python app.py
 ```bash
 # 1. 云开发控制台 → 云托管 → 新建服务
 # 2. 获取镜像仓库地址后在本地构建推送
-docker build -t trading-toolkit ./cloudrun
-docker tag trading-toolkit ccr.ccs.tencentyun.com/<env-id>/trading-toolkit
-docker push ccr.ccs.tencentyun.com/<env-id>/trading-toolkit
+docker build -t trading-toolkit-service ./cloudrun
+docker tag trading-toolkit-service ccr.ccs.tencentyun.com/<env-id>/trading-toolkit-service
+docker push ccr.ccs.tencentyun.com/<env-id>/trading-toolkit-service
 # 3. 在云托管控制台创建版本并部署
 ```
 
