@@ -1,5 +1,8 @@
 # PostgreSQL 本地安装脚本（需管理员权限运行）
 # 用法: 右键 PowerShell → 以管理员身份运行 → 执行此脚本
+#
+# ⚠️ 注意: 这是本地开发脚本，包含硬编码路径（如 .env 文件位置）。
+# 请根据实际开发环境修改下方路径后再执行。
 
 Write-Host "=== PostgreSQL 本地安装脚本 ===" -ForegroundColor Cyan
 

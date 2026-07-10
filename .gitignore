@@ -5,6 +5,7 @@ package-lock.json
 # IDE
 .vscode/
 .idea/
+.trae/
 *.swp
 *.swo
 
@@ -39,3 +40,9 @@ npm-debug.log*
 
 # Database
 *.db
+
+# Test artifacts
+tests/screenshots/
+result.json
+test_result.json
+pending_resp.json

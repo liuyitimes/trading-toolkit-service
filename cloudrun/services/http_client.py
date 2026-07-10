@@ -109,6 +109,16 @@ jsl_session = _make_session(
     referer="https://www.jisilu.cn/",
 )
 
+cninfo_session = _make_session(
+    ua="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+       "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    referer="http://www.cninfo.com.cn/new/disclosure",
+)
+cninfo_session.headers.update({
+    "X-Requested-With": "XMLHttpRequest",
+    "Accept": "application/json, text/plain, */*",
+})
+
 
 # ==================== 结构化日志 ====================
 
@@ -215,4 +225,30 @@ def jsl_post(url, data=None, headers=None, timeout=15, **kwargs):
         return resp
     except Exception as e:
         _log_request('jsl', url, -1, start, str(e))
+        raise
+
+
+def cninfo_post(url, data=None, headers=None, timeout=15, **kwargs):
+    """巨潮资讯 HTTP POST，复用 cninfo_session。"""
+    start = time.time()
+    try:
+        resp = cninfo_session.post(url, data=data, headers=headers,
+                                   timeout=timeout, **kwargs)
+        _log_request('cninfo', url, resp.status_code, start)
+        return resp
+    except Exception as e:
+        _log_request('cninfo', url, -1, start, str(e))
+        raise
+
+
+def cninfo_get(url, params=None, headers=None, timeout=15, **kwargs):
+    """巨潮资讯 HTTP GET，复用 cninfo_session。"""
+    start = time.time()
+    try:
+        resp = cninfo_session.get(url, params=params, headers=headers,
+                                  timeout=timeout, **kwargs)
+        _log_request('cninfo', url, resp.status_code, start)
+        return resp
+    except Exception as e:
+        _log_request('cninfo', url, -1, start, str(e))
         raise

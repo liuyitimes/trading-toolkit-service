@@ -324,6 +324,29 @@ def convertible_pending():
     return api_response(data, source=source, cached=cached)
 
 
+# ==================== 配售公告 API ====================
+
+@app.route('/api/v1/placement/sync', methods=['POST'])
+@limit(5)
+def placement_sync():
+    """触发公告同步（从巨潮资讯抓取发行结果公告）"""
+    days_back = int(request.args.get('days', 30))
+    result = factory._primary.sync_placement_announcements(days_back=days_back)
+    if 'error' in result:
+        return api_error('DATA_SOURCE_ERROR', result['error'], 502)
+    return api_response(result, source='cninfo', cached=False)
+
+
+@app.route('/api/v1/placement/list')
+@limit(60)
+def placement_list():
+    """查询已入库的配售结果"""
+    asset_type = request.args.get('type', '')  # bond / stock / 空=全部
+    from services.announcement_parser import get_all_placements
+    data = get_all_placements(asset_type=asset_type or None)
+    return api_response(data, source='local', cached=False)
+
+
 # ==================== LOF 基金 API ====================
 
 @app.route('/api/v1/lof/list')
@@ -630,6 +653,7 @@ def compat_health():
 
 from models.database import init_db, get_db_session
 from models.user import UserFavorite, UserReminder, UserSetting
+from models.placement import PlacementResult
 from services.auth import code_to_openid, require_auth
 
 # 初始化数据库

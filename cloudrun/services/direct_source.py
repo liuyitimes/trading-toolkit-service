@@ -335,6 +335,23 @@ class DirectSource(BaseDataSource):
             logger.warning(f'[DirectSource] get_convertible_pending 失败: {e}')
             return []
 
+    def sync_placement_announcements(self, days_back=30) -> dict:
+        """触发公告同步（可转债 + 配股）"""
+        try:
+            from services.announcement_parser import (
+                sync_cb_placement_announcements,
+                sync_stock_placement_announcements,
+            )
+            cb_stats = sync_cb_placement_announcements(days_back=days_back)
+            stock_stats = sync_stock_placement_announcements(days_back=max(days_back, 90))
+            return {
+                'convertible_bond': cb_stats,
+                'stock': stock_stats,
+            }
+        except Exception as e:
+            logger.warning(f'[DirectSource] sync_placement_announcements 失败: {e}')
+            return {'error': str(e)}
+
     # ---- LOF ----
 
     def get_lof_list(self, **kwargs) -> list:

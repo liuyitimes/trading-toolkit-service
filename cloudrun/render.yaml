@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: trading-toolkit-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11
+      - key: PORT
+        value: 8080
+    healthCheckPath: /api/v1/admin/health

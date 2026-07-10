@@ -9,11 +9,10 @@ HTTP 请求 (Flask 路由)
     ↓
 services/factory.py (工厂 + 熔断 + 降级)
     ↓
-数据源层（分级降级）
+数据源层（直连 HTTP）
 ┌─────────────────────────────────────┐
-│  akshare (主)  → 集思录 / 东方财富   │
-│  efinance (备选) → 东方财富          │
-│  tushare (备选) → tushare           │
+│  新浪财经 → 实时转债行情 + 正股行情   │
+│  东方财富 → 转股指标 + 待发债券 + PB/MA20 │
 │  mock (兜底) → 本地静态数据           │
 └─────────────────────────────────────┘
     ↓
@@ -123,11 +122,15 @@ else:                  中性
 
 ### 3.2 数据来源
 
-**akshare（集思录）**:
-```python
-import akshare as ak
-df = ak.bond_cb_jsl()  # 集思录可转债数据
-```
+**已上市可转债**：
+- 实时行情：新浪财经 `vip.stock.finance.sina.com.cn`（`_get_sina_bonds()`）
+- 转股指标：东方财富 `datacenter-web.eastmoney.com`（`_get_em_bonds()`，走 `em_get` 限流）
+
+**待发/配售可转债**：
+- 债券发行数据：东方财富 `RPT_BOND_CB_LIST`（`_fetch_em_pending_bonds()`）
+- 正股实时行情：新浪财经 `hq.sinajs.cn`（`_fetch_sina_stock_quotes()`）
+- PB / 总股本：东方财富 `RPT_VALUEANALYSIS_DET`（`_fetch_stock_fundamentals()`）
+- MA20 均线：东方财富 K线 `push2his.eastmoney.com`（`_fetch_stock_ma20()`）
 
 ### 3.3 核心指标说明
 
@@ -428,3 +431,43 @@ USE_MOCK=true python app.py
 > - 套利策略存在交易成本、流动性等风险
 > - 历史表现不代表未来收益
 > - 投资有风险，入市需谨慎
+
+## 可转债配售数据字段说明
+
+### 后端字段（来自东方财富 API）
+
+| 字段名 | 来源字段 | 说明 | 计算方式 |
+|--------|---------|------|----------|
+| `shares_for_10_lots` | `FIRST_PER_PREPLACING` | 配10张债券所需股数 | `1000 / per_share_allocation` |
+| `per_share_allocation` | `FIRST_PER_PREPLACING` | 每股配售额（元） | 直接透传 |
+| `safety_pad` | - | 安全垫（%） | `expected_profit / (shares_for_10_lots * stock_price) * 100` |
+| `expected_profit` | - | 预估收益（元） | 固定 200 元（1000 * 0.2） |
+| `stock_cash_ratio` | - | 正股现金比例 | `总市值(亿) / 发行规模(亿)` |
+| `pb` | `PB_MRQ` | 市净率 | 东财 RPT_VALUEANALYSIS_DET |
+| `ma20_price` | K线 API | 20日均线 | 东财 push2his 最近20日收盘价均值 |
+
+### 前端额外计算字段
+
+以下字段由前端 Store（`convertible.js`）和小程序（`convertible/index.js`）独立计算：
+
+| 字段名 | 公式 | 说明 |
+|--------|------|------|
+| `perShare` | `per_share_allocation \|\| (1000 / shares_for_10_lots)` | 每股配售额，后端为0时fallback |
+| `sharesFor10` | `shares_for_10_lots` | 配10张需股数 |
+| `costFor10Lots` | `sharesFor10 * stockPrice` | 获配10张成本 |
+| `sharesPerLotRaw` | `sharesFor10` | 获配每手理论股数（1手=10张，配10张即1手） |
+| `actualSharesFor1Lot` | `Math.ceil(sharesPerLotRaw / 100) * 100` | 实际需购买股数（A股1手=100股整数约束） |
+| `costPerLot` | `actualSharesFor1Lot * stockPrice` | 获配每手成本 |
+| `oneHandMinShares` | `Math.ceil(sharesFor10 * 0.6 / 100) * 100`（仅沪市） | 沪市一手党最低需股数。理论最低50%（精确算法四舍五入），实操建议60%以提高成功率，向上取整到100股整数倍 |
+| `oneHandMinCost` | `oneHandMinShares * stockPrice` | 一手党最低成本 |
+
+### 数据来源
+
+- 上游：东方财富 `datacenter-web.eastmoney.com/api/data/v1/get`（`RPT_BOND_CB_LIST`）
+- 正股行情：新浪财经 `hq.sinajs.cn`（批量实时报价）
+- PB/总股本：东方财富 `RPT_VALUEANALYSIS_DET`
+- MA20：东方财富 `push2his.eastmoney.com`（日K线）
+- 后端抓取：`convertible_bond.py` → `_fetch_em_pending_bonds()`
+- 辅助函数：`_fetch_sina_stock_quotes()` / `_fetch_stock_fundamentals()` / `_fetch_stock_ma20()`
+- 缓存：30分钟 TTL（`cache.py`）
+- 注：东方财富仅覆盖已进入发行阶段的债券（已公告发行 → 上市），早期流程债券（董事会预案 → 上市委通过）暂不提供
