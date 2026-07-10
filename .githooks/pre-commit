@@ -1,0 +1,14 @@
+#!/bin/sh
+
+set -eu
+
+blocked_files="$(git diff --cached --name-only --diff-filter=ACMR | grep -E '(^|/)(__pycache__/|\.pytest_cache/)|\.(pyc|pyo|pyd|db)$|(^|/)\.env(\..*)?$' || true)"
+
+if [ -n "$blocked_files" ]; then
+  echo "Commit blocked: generated files or local configuration must not be committed:"
+  echo "$blocked_files"
+  echo "Remove them from the index with: git restore --staged <file>"
+  exit 1
+fi
+
+git diff --cached --check
