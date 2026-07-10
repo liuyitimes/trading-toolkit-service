@@ -1,0 +1,53 @@
+{
+  "pages": [
+    "pages/index/index",
+    "pages/convertible/index",
+    "pages/lof/index",
+    "pages/hkipo/index",
+    "pages/hkipoDetail/index",
+    "pages/setting/index",
+    "pages/bondDetail/index",
+    "pages/test/index",
+    "pages/quoteManage/index",
+    "pages/apiLog/index"
+  ],
+  "window": {
+    "backgroundColor": "#F8F7F4",
+    "backgroundTextStyle": "light",
+    "navigationBarBackgroundColor": "#1A1A2E",
+    "navigationBarTitleText": "旺财百宝箱",
+    "navigationBarTextStyle": "white"
+  },
+  "tabBar": {
+    "custom": true,
+    "color": "#9A9AB0",
+    "selectedColor": "#D4A017",
+    "backgroundColor": "#FFFFFF",
+    "borderStyle": "white",
+    "list": [
+      {
+        "pagePath": "pages/index/index",
+        "text": "首页"
+      },
+      {
+        "pagePath": "pages/convertible/index",
+        "text": "可转债"
+      },
+      {
+        "pagePath": "pages/lof/index",
+        "text": "LOF"
+      },
+      {
+        "pagePath": "pages/hkipo/index",
+        "text": "港股"
+      },
+      {
+        "pagePath": "pages/setting/index",
+        "text": "管理"
+      }
+    ]
+  },
+  "sitemapLocation": "sitemap.json",
+  "style": "v2",
+  "lazyCodeLoading": "requiredComponents"
+}

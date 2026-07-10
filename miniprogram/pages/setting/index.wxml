@@ -1,0 +1,220 @@
+<view class="container {{isDarkMode ? 'dark-mode' : ''}}">
+  <!-- 页面标题 -->
+  <view class="page-header">
+    <text class="page-title">设置</text>
+  </view>
+
+  <!-- 1. 外观设置 -->
+  <view class="section">
+    <view class="section-header">
+      <view class="section-title-row">
+        <text class="section-icon">🎨</text>
+        <text class="section-title">外观</text>
+      </view>
+    </view>
+    <view class="section-body">
+      <!-- 主题选择 -->
+      <view class="setting-row">
+        <view class="setting-left">
+          <text class="setting-label">主题风格</text>
+        </view>
+        <view class="theme-selector">
+          <view class="theme-option {{currentTheme === 'light' ? 'active' : ''}}" bindtap="setTheme" data-theme="light">
+            <view class="theme-preview light-preview"></view>
+            <text class="theme-name">白色</text>
+          </view>
+          <view class="theme-option {{currentTheme === 'dark' ? 'active' : ''}}" bindtap="setTheme" data-theme="dark">
+            <view class="theme-preview dark-preview"></view>
+            <text class="theme-name">暗夜</text>
+          </view>
+        </view>
+      </view>
+      <!-- 启动默认页 -->
+      <view class="setting-row border-top">
+        <view class="setting-left">
+          <text class="setting-label">启动默认页</text>
+        </view>
+        <picker mode="selector" range="{{tabOptions}}" range-key="name" bindchange="onDefaultTabChange">
+          <view class="setting-right">
+            <text class="setting-value-text">{{currentDefaultTabName}}</text>
+            <text class="arrow">›</text>
+          </view>
+        </picker>
+      </view>
+    </view>
+  </view>
+
+  <!-- 2. 订阅提醒 -->
+  <view class="section">
+    <view class="section-header">
+      <view class="section-title-row">
+        <text class="section-icon">🔔</text>
+        <text class="section-title">订阅提醒</text>
+      </view>
+    </view>
+    <view class="section-body">
+      <!-- 开启提醒 -->
+      <view class="setting-row">
+        <view class="setting-left">
+          <text class="setting-label">新股/新债提醒</text>
+          <text class="setting-hint">中签公布时通知</text>
+        </view>
+        <switch checked="{{subscribeEnabled}}" bindchange="onSubscribeEnabledChange" color="#2DA44E"/>
+      </view>
+      <!-- 申购截止提醒 -->
+      <view class="setting-row border-top">
+        <view class="setting-left">
+          <text class="setting-label">申购截止提醒</text>
+          <text class="setting-hint">申购截止日前一天提醒</text>
+        </view>
+        <switch checked="{{subscribeDeadlineEnabled}}" bindchange="onSubscribeDeadlineChange" color="#2DA44E"/>
+      </view>
+      <!-- 提醒时间 -->
+      <view class="setting-row border-top" wx:if="{{subscribeDeadlineEnabled}}">
+        <view class="setting-left">
+          <text class="setting-label">提前提醒时间</text>
+        </view>
+        <picker mode="selector" range="{{reminderOptions}}" range-key="name" bindchange="onReminderTimeChange">
+          <view class="setting-right">
+            <text class="setting-value-text">{{currentReminderTimeName}}</text>
+            <text class="arrow">›</text>
+          </view>
+        </picker>
+      </view>
+    </view>
+  </view>
+
+  <!-- 3. 名言管理 -->
+  <view class="section">
+    <view class="section-header">
+      <view class="section-title-row">
+        <text class="section-icon">💬</text>
+        <text class="section-title">名言管理</text>
+      </view>
+    </view>
+    <view class="section-body">
+      <view class="setting-row clickable" bindtap="goToQuoteManage">
+        <view class="setting-left">
+          <text class="setting-label">管理名言</text>
+          <text class="setting-hint">添加、编辑、删除首页名言</text>
+        </view>
+        <view class="setting-right">
+          <text class="arrow">›</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 4. 服务配置 -->
+  <view class="section">
+    <view class="section-header">
+      <view class="section-title-row">
+        <text class="section-icon">⚙️</text>
+        <text class="section-title">服务配置</text>
+      </view>
+    </view>
+    <view class="section-body">
+      <view class="setting-row vertical">
+        <view class="setting-left">
+          <text class="setting-label">云托管地址</text>
+        </view>
+        <input class="url-input {{inputError ? 'error' : ''}}" placeholder="请输入云托管服务地址" value="{{cloudRunUrl}}" bindinput="onUrlInput" />
+        <text class="input-error" wx:if="{{inputError}}">{{inputError}}</text>
+        <text class="input-hint" wx:else>格式：https://your-service-id.run.tcloudbase.com</text>
+      </view>
+      <view class="setting-row border-top" wx:if="{{cloudRunUrl}}">
+        <view class="setting-left">
+          <text class="setting-label danger">清除配置</text>
+        </view>
+        <view class="icon-btn-large danger" bindtap="clearConfig">
+          <text>清除</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 5. 开发工具 -->
+  <view class="section">
+    <view class="section-header">
+      <view class="section-title-row">
+        <text class="section-icon">🔧</text>
+        <text class="section-title">开发工具</text>
+      </view>
+    </view>
+    <view class="section-body">
+      <view class="setting-row clickable" bindtap="goToTest">
+        <view class="setting-left">
+          <text class="setting-label">接口测试</text>
+        </view>
+        <view class="setting-right">
+          <text class="arrow">›</text>
+        </view>
+      </view>
+      <view class="setting-row clickable border-top" bindtap="goToApiLog">
+        <view class="setting-left">
+          <text class="setting-label">接口日志</text>
+          <text class="setting-hint">查看请求耗时与响应正文</text>
+        </view>
+        <view class="setting-right">
+          <text class="arrow">›</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 6. 关于 -->
+  <view class="section">
+    <view class="section-header">
+      <view class="section-title-row">
+        <text class="section-icon">ℹ️</text>
+        <text class="section-title">关于</text>
+      </view>
+    </view>
+    <view class="about-info">
+      <view class="about-row">
+        <text class="about-label">应用名称</text>
+        <text class="about-value">旺财百宝箱</text>
+      </view>
+      <view class="about-row">
+        <text class="about-label">版本号</text>
+        <text class="about-value">1.0.0</text>
+      </view>
+      <view class="about-row">
+        <text class="about-label">数据来源</text>
+        <text class="about-value">AkShare</text>
+      </view>
+      <view class="about-row">
+        <text class="about-label">开发框架</text>
+        <text class="about-value">微信小程序</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 底部留白 -->
+  <view class="bottom-space"></view>
+</view>
+
+<!-- 名言编辑弹窗 -->
+<view class="modal-overlay" wx:if="{{showQuoteModal}}" bindtap="closeQuoteModal">
+  <view class="quote-modal" catchtap="stopPropagation">
+    <view class="modal-header">
+      <text class="modal-title">{{editingQuoteIndex >= 0 ? '编辑名言' : '添加名言'}}</text>
+      <view class="modal-close" bindtap="closeQuoteModal">×</view>
+    </view>
+    <view class="modal-body">
+      <view class="form-group">
+        <text class="form-label">名言内容</text>
+        <textarea class="form-textarea" placeholder="请输入名言内容" value="{{newQuoteText}}" bindinput="onQuoteTextInput" maxlength="200"></textarea>
+        <text class="char-count">{{newQuoteText.length}}/200</text>
+      </view>
+      <view class="form-group">
+        <text class="form-label">作者（可选）</text>
+        <input class="form-input" placeholder="请输入作者" value="{{newQuoteAuthor}}" bindinput="onQuoteAuthorInput" />
+      </view>
+    </view>
+    <view class="modal-footer">
+      <button class="modal-btn cancel" bindtap="closeQuoteModal">取消</button>
+      <button class="modal-btn confirm" bindtap="saveQuote">保存</button>
+    </view>
+  </view>
+</view>

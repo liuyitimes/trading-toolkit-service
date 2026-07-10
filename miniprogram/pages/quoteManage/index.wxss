@@ -1,0 +1,385 @@
+/* ==================== 名言管理页面 ==================== */
+.container {
+  min-height: 100vh;
+  background: #F6F8FA;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* ==================== 页面头部 ==================== */
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 32rpx 24rpx;
+  background: #FFFFFF;
+  border-bottom: 1rpx solid #EAEef2;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  min-width: 120rpx;
+}
+
+.back-icon {
+  font-size: 48rpx;
+  color: #0969DA;
+  line-height: 1;
+  margin-right: 4rpx;
+}
+
+.back-text {
+  font-size: 28rpx;
+  color: #0969DA;
+}
+
+.page-title {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #1F2328;
+}
+
+.header-right {
+  min-width: 120rpx;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.done-text {
+  font-size: 28rpx;
+  color: #2DA44E;
+  font-weight: 500;
+}
+
+/* ==================== 名言列表 ==================== */
+.quote-list {
+  padding: 24rpx;
+}
+
+.quote-card {
+  background: #FFFFFF;
+  border-radius: 12rpx;
+  padding: 28rpx;
+  margin-bottom: 20rpx;
+  box-shadow: 0 1rpx 3rpx rgba(31, 35, 40, 0.04);
+}
+
+.quote-content {
+  margin-bottom: 20rpx;
+}
+
+.quote-text {
+  display: block;
+  font-size: 30rpx;
+  color: #1F2328;
+  line-height: 1.6;
+  margin-bottom: 12rpx;
+}
+
+.quote-author {
+  display: block;
+  font-size: 26rpx;
+  color: #818B98;
+}
+
+.quote-actions {
+  display: flex;
+  gap: 16rpx;
+  justify-content: flex-end;
+  padding-top: 16rpx;
+  border-top: 1rpx solid #EAEef2;
+}
+
+.action-btn {
+  padding: 12rpx 24rpx;
+  background: #F6F8FA;
+  border-radius: 8rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.action-btn.delete {
+  background: #FFEBE9;
+}
+
+.action-icon {
+  font-size: 28rpx;
+}
+
+/* ==================== 添加区域 ==================== */
+.add-section {
+  padding: 0 24rpx;
+}
+
+.add-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12rpx;
+  padding: 28rpx;
+  background: #FFFFFF;
+  border-radius: 12rpx;
+  margin-bottom: 20rpx;
+}
+
+.add-btn:active {
+  background: #F6F8FA;
+}
+
+.add-icon {
+  font-size: 36rpx;
+  color: #2DA44E;
+  font-weight: 500;
+}
+
+.add-text {
+  font-size: 30rpx;
+  color: #2DA44E;
+  font-weight: 500;
+}
+
+.reset-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24rpx;
+}
+
+.reset-text {
+  font-size: 26rpx;
+  color: #818B98;
+}
+
+.reset-text:active {
+  color: #CF222E;
+}
+
+/* ==================== 底部留白 ==================== */
+.bottom-space {
+  height: 60rpx;
+}
+
+/* ==================== 模态框 ==================== */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(31, 35, 40, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.edit-modal {
+  width: 90%;
+  max-width: 640rpx;
+  background: #FFFFFF;
+  border-radius: 20rpx;
+  overflow: hidden;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 32rpx 32rpx 24rpx;
+  border-bottom: 1rpx solid #EAEef2;
+}
+
+.modal-title {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #1F2328;
+}
+
+.modal-close {
+  width: 48rpx;
+  height: 48rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 36rpx;
+  color: #818B98;
+}
+
+.modal-body {
+  padding: 32rpx;
+}
+
+.form-group {
+  margin-bottom: 28rpx;
+}
+
+.form-group:last-child {
+  margin-bottom: 0;
+}
+
+.form-label {
+  display: block;
+  font-size: 26rpx;
+  color: #59636E;
+  margin-bottom: 12rpx;
+  font-weight: 500;
+}
+
+.form-textarea {
+  width: 100%;
+  height: 200rpx;
+  padding: 20rpx;
+  background: #F6F8FA;
+  border: 1rpx solid #D0D7DE;
+  border-radius: 10rpx;
+  font-size: 28rpx;
+  color: #1F2328;
+  line-height: 1.6;
+  box-sizing: border-box;
+}
+
+.char-count {
+  font-size: 22rpx;
+  color: #818B98;
+  text-align: right;
+  margin-top: 8rpx;
+  display: block;
+}
+
+.form-input {
+  width: 100%;
+  padding: 20rpx;
+  background: #F6F8FA;
+  border: 1rpx solid #D0D7DE;
+  border-radius: 10rpx;
+  font-size: 28rpx;
+  color: #1F2328;
+  box-sizing: border-box;
+}
+
+.modal-footer {
+  display: flex;
+  border-top: 1rpx solid #EAEef2;
+}
+
+.modal-btn {
+  flex: 1;
+  padding: 28rpx;
+  font-size: 30rpx;
+  border-radius: 0;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.modal-btn.cancel {
+  background: #FFFFFF;
+  color: #59636E;
+  border-right: 1rpx solid #EAEef2;
+}
+
+.modal-btn.confirm {
+  background: #2DA44E;
+  color: #FFFFFF;
+}
+
+/* ==================== 暗夜模式 ==================== */
+.dark-mode {
+  background: #0D1117;
+}
+
+.dark-mode .page-header {
+  background: #161B22;
+  border-color: #30363D;
+}
+
+.dark-mode .page-title {
+  color: #E6EDF3;
+}
+
+.dark-mode .back-icon,
+.dark-mode .back-text {
+  color: #58A6FF;
+}
+
+.dark-mode .done-text {
+  color: #3FB950;
+}
+
+.dark-mode .quote-card {
+  background: #161B22;
+}
+
+.dark-mode .quote-text {
+  color: #E6EDF3;
+}
+
+.dark-mode .quote-author {
+  color: #8B949E;
+}
+
+.dark-mode .quote-actions {
+  border-color: #30363D;
+}
+
+.dark-mode .action-btn {
+  background: #21262D;
+}
+
+.dark-mode .action-btn.delete {
+  background: #4D1F1F;
+}
+
+.dark-mode .add-btn {
+  background: #161B22;
+}
+
+.dark-mode .add-btn:active {
+  background: #21262D;
+}
+
+.dark-mode .add-icon,
+.dark-mode .add-text {
+  color: #3FB950;
+}
+
+.dark-mode .reset-text {
+  color: #6E7681;
+}
+
+.dark-mode .edit-modal {
+  background: #161B22;
+}
+
+.dark-mode .modal-header {
+  border-color: #30363D;
+}
+
+.dark-mode .modal-title {
+  color: #E6EDF3;
+}
+
+.dark-mode .modal-close {
+  color: #8B949E;
+}
+
+.dark-mode .form-textarea,
+.dark-mode .form-input {
+  background: #0D1117;
+  border-color: #30363D;
+  color: #E6EDF3;
+}
+
+.dark-mode .form-label {
+  color: #8B949E;
+}
+
+.dark-mode .modal-btn.cancel {
+  background: #161B22;
+  color: #8B949E;
+  border-color: #30363D;
+}
+
+.dark-mode .modal-btn.confirm {
+  background: #2EA043;
+}
