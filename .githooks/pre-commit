@@ -2,7 +2,7 @@
 
 set -eu
 
-blocked_files="$(git diff --cached --name-only --diff-filter=ACMR | grep -E '(^|/)(__pycache__/|\.pytest_cache/)|\.(pyc|pyo|pyd|db)$|(^|/)\.env(\..*)?$' || true)"
+blocked_files="$(git diff --cached --name-only --diff-filter=ACMR | grep -E '(^|/)(__pycache__/|\.pytest_cache/)|\.(pyc|pyo|pyd|db|sqlite|sqlite3)$|(^|/)(\.env(\..*)?|project\.private\.config\.json)$' || true)"
 
 if [ -n "$blocked_files" ]; then
   echo "Commit blocked: generated files or local configuration must not be committed:"

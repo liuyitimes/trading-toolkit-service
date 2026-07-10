@@ -285,30 +285,9 @@ curl http://localhost:8080/api/v1/convertible/list?page=1&page_size=3
 
 ## 环境配置
 
-### 环境切换
+### 客户端边界
 
-`miniprogram/config.js` 配置了双环境自动切换：
-
-```javascript
-autoSwitch: true  // true=根据小程序版本自动切换
-```
-
-| 小程序版本 | 使用环境 | 云环境 ID | CloudRun 地址 |
-|-----------|---------|-----------|---------------|
-| 开发版（本地预览） | `development` | `cloudbase-d1gurol40225b603e` | `http://localhost:8080` |
-| 体验版 | `production` | `cloudbase-d1gurol40225b603e` | 同 development（未部署） |
-| 正式版 | `production` | `cloudbase-d1gurol40225b603e` | 同 development（未部署） |
-
-如需手动指定：
-
-```javascript
-autoSwitch: false,
-currentEnv: 'development'  // 或 'production'
-```
-
-### 小程序配置
-
-开发者工具 → 详情 → 本地设置 → 勾选「不校验合法域名、web-view（业务域名）、TLS 版本以及 HTTPS 证书」
+微信小程序的配置、云函数和静态资源由独立的 `trading-toolkit-mp` 仓库维护。本仓库只包含 CloudRun 服务、回测框架和服务端文档。
 
 ## 启动步骤
 
@@ -340,11 +319,9 @@ curl http://localhost:8080/api/v1/market/overview
 curl http://localhost:8080/api/v1/convertible/list?page=1&page_size=3
 ```
 
-### 3. 启动小程序
+### 3. 启动客户端
 
-1. 微信开发者工具 → 导入项目 → 选择项目根目录
-2. 确认 `project.config.json` 中 `appid` 正确
-3. 编译预览
+小程序启动和开发者工具配置请在 `trading-toolkit-mp` 仓库中完成。
 
 ### 4. 调试
 

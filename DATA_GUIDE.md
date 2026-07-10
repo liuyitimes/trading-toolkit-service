@@ -5,31 +5,21 @@
 ### 1.1 数据获取链路
 
 ```
-小程序前端 (WXML/JS)
+客户端（独立 `trading-toolkit-mp` 仓库）
     ↓
-utils/cloudApi.js (callMarket / callMarketSafe)
+CloudRun API（`cloudrun/`）
+Python/Flask + akshare → 集思录等
     ↓
-┌─────────────────────────────────────┐
-│           数据获取层（二选一）          │
-├─────────────────────────────────────┤
-│  云函数 (cloudfunctions/market)      │
-│  Node.js + axios → 东方财富公开API   │
-├─────────────────────────────────────┤
-│  云托管 (cloudrun)                   │
-│  Python/Flask + akshare → 集思录等   │
-└─────────────────────────────────────┘
-    ↓
-  Mock数据回退（本地静态数据）
+Mock 数据回退
 ```
 
 ### 1.2 两套后端实现
 
 | 方式 | 技术栈 | 数据源 | 文件位置 |
 |------|--------|--------|----------|
-| 云函数 | Node.js + axios | 东方财富公开API | `cloudfunctions/market/` |
 | 云托管 | Python + Flask + akshare | 集思录 / 东方财富 | `cloudrun/` |
 
-两套后端实现了相同的接口协议，前端通过配置切换。当实时API不可用时，自动回退到本地Mock数据。
+服务端以 CloudRun 为唯一数据接口；小程序客户端及其 Mock 数据位于独立的 `trading-toolkit-mp` 仓库。
 
 ---
 
@@ -406,9 +396,8 @@ const data = await callMarketSafe('convertibleSignals', {}, null)
 
 | 层级 | 文件位置 |
 |------|----------|
-| 云函数 | `cloudfunctions/market/data/mock.js` |
 | 云托管 | `cloudrun/mock_data.py` |
-| 前端 | `pages/*/index.js` 内的 getMockData() |
+| 小程序客户端 | 独立 `trading-toolkit-mp` 仓库 |
 
 ### 7.2 Mock数据用途
 
@@ -417,8 +406,6 @@ const data = await callMarketSafe('convertibleSignals', {}, null)
 3. **异常回退**: 真实API故障时保证页面正常显示
 
 ### 7.3 切换到真实数据
-
-**云函数方式**: 部署云函数后自动使用东方财富API，无需配置
 
 **云托管方式**:
 ```bash

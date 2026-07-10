@@ -2,33 +2,13 @@
 
 ## 当前部署策略
 
-**开发阶段**：本地 Flask 后端 + 小程序预览
+**开发阶段**：本地 Flask 后端
 
-**上线方案**：Python 云函数（最低成本，零费用）
+**上线方案**：CloudRun 容器部署
 
-> 当前以本地 Flask 开发为主，上线时迁移到云函数。
+小程序端的发布配置由独立的 `trading-toolkit-mp` 仓库维护。
 
 ## 环境配置
-
-### 小程序端 (`miniprogram/config.js`)
-
-```javascript
-module.exports = {
-  // 云开发环境 ID
-  cloudEnv: {
-    development: 'cloudbase-d1gurol40225b603e',
-    production: 'cloudbase-d1gurol40225b603e'  // 暂用同一环境
-  },
-
-  // CloudRun 后端地址
-  development: { baseUrl: 'http://localhost:8080' },
-  production:  { baseUrl: 'https://your-service-id.run.tcloudbase.com' },
-
-  // 切换方式
-  autoSwitch: true,         // true=根据小程序版本自动选环境
-  currentEnv: 'development' // autoSwitch=false 时生效
-};
-```
 
 ### Flask 后端环境变量 (`cloudrun/`)
 
@@ -51,32 +31,6 @@ set REDIS_URL=redis://localhost:6379/0
 set USE_MOCK=true
 python app.py
 ```
-
-## 云函数部署
-
-### 部署流程
-
-1. 微信开发者工具 → 云开发控制台 → 云函数
-2. 右键 `cloudfunctions/market` → 「上传并部署（云端安装依赖）」
-
-### 云函数配置
-
-| 配置 | 值 |
-|------|-----|
-| 运行环境 | 右键云函数 → 函数配置 → 运行时 = Python |
-| 超时时间 | 60 秒（akshare 首次数据下载较慢） |
-| 内存 | 256MB |
-
-### 迁移注意事项
-
-从本地 Flask 迁移到云函数时，需要处理：
-
-| 差异 | Flask 本地 | 云函数 |
-|------|-----------|--------|
-| 用户数据 | SQLite | 微信云数据库（MongoDB） |
-| 文件系统 | 可读写文件 | 只读（/tmp 可临时写入） |
-| 持续运行 | 24/7 | 按需调用，有冷启动 |
-| 包体积 | 无限制 | 限 50MB（akshare+pandas 需精简） |
 
 ## Docker 云托管部署
 
