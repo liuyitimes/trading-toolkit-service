@@ -2,8 +2,7 @@ services:
   - type: web
     name: trading-toolkit-api
     runtime: docker
-    rootDir: ./cloudrun
-    dockerfilePath: ./Dockerfile
+    dockerfilePath: ./cloudrun/Dockerfile
     plan: free
     envVars:
       - key: PYTHON_VERSION

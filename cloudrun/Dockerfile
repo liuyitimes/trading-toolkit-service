@@ -3,7 +3,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # 安装依赖（使用清华镜像加速，利用 Docker 层缓存）
-COPY requirements.txt .
+COPY cloudrun/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple \
     && rm -rf /root/.cache/pip
 
@@ -11,7 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua
 RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser
 
 # 复制应用代码
-COPY . .
+COPY cloudrun/ .
 
 # 设置权限
 RUN chown -R appuser:appuser /app
