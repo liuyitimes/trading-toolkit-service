@@ -8,6 +8,7 @@ THS 页面为 GBK 编码 HTML，用 pandas.read_html 解析表格。
 import io
 import logging
 import re
+from datetime import date, datetime
 
 import pandas as pd
 
@@ -68,6 +69,32 @@ def _parse_date(text):
     return text
 
 
+def _classify_status(apply_date, list_date, today=None):
+    """Classify an A-share IPO by its published dates, never by list presence.
+
+    The legacy endpoint name is retained for compatibility, but the source is an
+    A-share IPO table.  A row is actionable only on its application date; all
+    other rows are historical or pending observations.
+    """
+    current = today or date.today()
+
+    def parse(value):
+        try:
+            return datetime.strptime(str(value)[:10], '%Y-%m-%d').date()
+        except (TypeError, ValueError):
+            return None
+
+    apply_day = parse(apply_date)
+    list_day = parse(list_date)
+    if list_day and list_day <= current:
+        return 'listed'
+    if apply_day == current:
+        return 'open'
+    if apply_day and apply_day > current:
+        return 'upcoming'
+    return 'pending'
+
+
 def _parse_ipo_row(row):
     """解析单行 IPO 数据，统一字段映射"""
     list_date = str(row.get('上市日期', ''))
@@ -82,13 +109,8 @@ def _parse_ipo_row(row):
     pe_val = safe_float(pe_ratio.replace('-', '0') if pe_ratio else 0, 0)
     ind_val = safe_float(industry_pe.replace('-', '0') if industry_pe else 0, 0)
 
-    # 状态推断
-    if list_date_parsed and list_date != '-':
-        status = 'listed'
-    elif apply_date:
-        status = 'upcoming'
-    else:
-        status = 'pending'
+    status = _classify_status(apply_date, list_date_parsed)
+    pe_available = bool(pe_ratio and pe_ratio != '-' and industry_pe and industry_pe != '-')
 
     return {
         'code': str(row.get('股票代码', '')),
@@ -105,11 +127,16 @@ def _parse_ipo_row(row):
         'win_rate': _strip_html(win_rate) if win_rate != '-' else '',
         'pe_ratio': pe_ratio if pe_ratio != '-' else '',
         'industry_pe': industry_pe if industry_pe != '-' else '',
-        'pe_diff': round(pe_val - ind_val, 2),
+        'pe_diff': round(pe_val - ind_val, 2) if pe_available else None,
+        'pe_available': pe_available,
         'first_day_gain': str(row.get('首日最高涨幅', '')) if str(row.get('首日最高涨幅', '')) != '-' else '',
         'plate_gain': str(row.get('打新收益（元）', '')) if str(row.get('打新收益（元）', '')) != '-' else '',
         'continuous_days': str(row.get('连板天数', '')) if str(row.get('连板天数', '')) != '-' else '',
         'status': status,
+        # The source does not establish broker channel, market-value eligibility
+        # or account capability.  It is deliberately an observation list.
+        'strategy_status': 'observation',
+        'source_market': 'A股',
     }
 
 
@@ -126,15 +153,13 @@ def get_hk_ipo_list():
 
 
 def get_hk_ipo_upcoming():
-    """获取申购中的新股"""
+    """获取今日可申购的 A 股新股（保留旧函数名以兼容 API 路由）。"""
     try:
         df = _fetch_ths_ipo_df()
         if df is None or df.empty:
             return []
-        upcoming = df[df['上市日期'].astype(str) == '-'].head(20)
-        if upcoming.empty:
-            return []
-        return [_parse_ipo_row(row) for _, row in upcoming.iterrows()]
+        items = [_parse_ipo_row(row) for _, row in df.iterrows()]
+        return [item for item in items if item['status'] == 'open']
     except Exception as e:
         logger.warning(f'获取即将上市新股失败: {e}')
         return []
@@ -159,12 +184,12 @@ def get_hk_ipo_summary():
         df = _fetch_ths_ipo_df()
         if df is None or df.empty:
             return {'upcoming_count': 0, 'recent_count': 0, 'total': 0}
-        upcoming = df[df['上市日期'].astype(str) == '-']
-        listed = df[df['上市日期'].astype(str) != '-']
+        items = [_parse_ipo_row(row) for _, row in df.iterrows()]
         return {
-            'upcoming_count': int(upcoming.shape[0]),
-            'recent_count': int(listed.head(10).shape[0]),
-            'total': int(df.shape[0]),
+            'upcoming_count': sum(item['status'] == 'open' for item in items),
+            'recent_count': sum(item['status'] == 'listed' for item in items),
+            'total': len(items),
+            'source_market': 'A股',
         }
     except Exception as e:
         logger.warning(f'获取新股申购概览失败: {e}')

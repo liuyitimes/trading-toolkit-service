@@ -26,6 +26,7 @@ from utils.convert import safe_float
 logger = logging.getLogger('trading_toolkit')
 
 CST = timezone(timedelta(hours=8))
+_NAV_MAX_AGE_DAYS = 7
 
 # ==================== 上游 API URL ====================
 
@@ -150,6 +151,16 @@ def _fetch_one_nav(code):
     return result
 
 
+def _nav_is_current(nav_date, now=None):
+    """A reported NAV is usable for an observation only while it is recent."""
+    try:
+        reported = datetime.strptime(str(nav_date)[:10], '%Y-%m-%d').date()
+    except (TypeError, ValueError):
+        return False
+    current = (now or datetime.now(CST)).date()
+    return 0 <= (current - reported).days <= _NAV_MAX_AGE_DAYS
+
+
 def _batch_fetch_navs(codes):
     """串行批量拉取净值（遵循东财防封铁律：不并发）。
 
@@ -203,7 +214,8 @@ def get_closed_end_list():
         nav = nav_info.get('nav', 0)
         nav_date = nav_info.get('date', '')
 
-        discount = ((nav - price) / nav * 100) if nav > 0 else 0
+        nav_is_current = nav > 0 and _nav_is_current(nav_date)
+        discount = ((nav - price) / nav * 100) if nav_is_current else None
 
         result.append({
             'code': code,
@@ -216,10 +228,14 @@ def get_closed_end_list():
             'amount': amount,
             'nav': nav,
             'nav_date': nav_date,
-            'discount': round(discount, 2),
+            'discount': round(discount, 2) if discount is not None else None,
+            'nav_is_current': nav_is_current,
             'maturity_date': '',
             'top_holdings': [],
             'type': '封闭式基金',
+            'strategy_status': 'observation',
+            'exit_event_verified': False,
+            'exit_event_note': '未核验到期、清盘、开放或要约退出事件，不构成可执行套利。',
         })
 
     # 后台串行拉取净值（daemon 线程，不阻塞当前请求）
@@ -240,8 +256,8 @@ def get_closed_end_summary():
         return {}
 
     total = len(items)
-    with_nav = [i for i in items if i.get('nav', 0) > 0]
-    discounts = [i['discount'] for i in with_nav if i.get('discount')]
+    with_nav = [i for i in items if i.get('nav_is_current')]
+    discounts = [i['discount'] for i in with_nav if i.get('discount') is not None]
     avg_discount = (sum(discounts) / len(discounts)) if discounts else 0
     high_discount_count = len([d for d in discounts if d >= 5])
     premium_count = len([d for d in discounts if d < 0])
@@ -252,5 +268,6 @@ def get_closed_end_summary():
         'avg_discount': round(avg_discount, 2),
         'high_discount_count': high_discount_count,
         'premium_count': premium_count,
+        'verified_count': 0,
         'total_amount': round(sum(i.get('amount', 0) for i in items), 0),
     }
