@@ -11,6 +11,7 @@
 
 import json
 import logging
+import math
 import re
 from datetime import datetime
 
@@ -56,6 +57,17 @@ _STAGE_DATE_TTL = 86400  # 24h
 # ==================== 工具函数 ====================
 
 
+def _parse_cashflows(value):
+    if isinstance(value, list):
+        return value
+    if not value:
+        return []
+    try:
+        return json.loads(value)
+    except Exception:
+        return []
+
+
 def get_exchange_by_code(code):
     """根据代码判断交易所"""
     code_str = str(code)
@@ -76,7 +88,200 @@ def _parse_sina_symbol(symbol):
     return symbol
 
 
+def _is_finite_number(value):
+    try:
+        return value is not None and math.isfinite(float(value))
+    except Exception:
+        return False
+
+
+def _parse_date(value):
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in ('nan', 'nat', 'none', 'null'):
+        return None
+    for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d'):
+        try:
+            return datetime.strptime(text[:19 if ' ' in text else 10], fmt)
+        except Exception:
+            pass
+    return None
+
+
+def _parse_coupon_schedule(text, years=6):
+    """从“第一年0.3%、第二年0.5%...”解析年度票息。"""
+    default = [0.3, 0.5, 1.0, 1.5, 1.8, 2.0]
+    if not text:
+        return default[:years]
+
+    rates = []
+    for match in re.finditer(r'第[一二三四五六七八九十\d]+年\s*([0-9]+(?:\.[0-9]+)?)\s*%', str(text)):
+        rates.append(safe_float(match.group(1)))
+    if not rates:
+        rates = [safe_float(x) for x in re.findall(r'([0-9]+(?:\.[0-9]+)?)\s*%', str(text))]
+    if not rates:
+        rates = default[:]
+
+    while len(rates) < years:
+        rates.append(rates[-1] if rates else default[min(len(rates), len(default) - 1)])
+    return rates[:years]
+
+
+def _parse_maturity_redemption_price(redeem_clause, par_value=100):
+    """解析到期赎回价，优先识别“面值的110%/110元”等口径。"""
+    text = str(redeem_clause or '')
+    par = par_value if par_value > 0 else 100
+
+    percent_match = re.search(r'面值的\s*([0-9]+(?:\.[0-9]+)?)\s*%', text)
+    if percent_match:
+        return round(par * safe_float(percent_match.group(1)) / 100, 4)
+
+    yuan_match = re.search(r'([0-9]+(?:\.[0-9]+)?)\s*元[（(]?含最后一期', text)
+    if yuan_match:
+        return safe_float(yuan_match.group(1))
+
+    return 0
+
+
+def _rating_discount_rate(rating):
+    """纯债价值估算折现率；缺少实时同评级收益率曲线时用保守评级档位。"""
+    text = str(rating or '').upper().replace('STI', '').strip()
+    if text.startswith('AAA'):
+        return 0.023
+    if text.startswith('AA+'):
+        return 0.026
+    if text.startswith('AA-'):
+        return 0.033
+    if text.startswith('AA'):
+        return 0.029
+    if text.startswith('A+'):
+        return 0.042
+    if text.startswith('A-'):
+        return 0.055
+    if text.startswith('A'):
+        return 0.048
+    return 0.04
+
+
+def _build_bond_cashflows(value_date, expire_date, coupon_explain, redeem_clause, par_value=100):
+    start = _parse_date(value_date)
+    maturity = _parse_date(expire_date)
+    if not start or not maturity:
+        return []
+
+    today = datetime.now()
+    years = max(1, int(round((maturity - start).days / 365.0)))
+    coupons = _parse_coupon_schedule(coupon_explain, years)
+    par = par_value if par_value > 0 else 100
+    maturity_redemption = _parse_maturity_redemption_price(redeem_clause, par)
+    if maturity_redemption <= 0:
+        maturity_redemption = par + par * coupons[-1] / 100
+
+    flows = []
+    for i in range(1, years + 1):
+        # 可转债付息日通常与起息日同月同日；闰日等边界用 2/28 兜底。
+        try:
+            pay_date = start.replace(year=start.year + i)
+        except ValueError:
+            pay_date = start.replace(year=start.year + i, day=28)
+        if pay_date <= today:
+            continue
+
+        amount = par * coupons[min(i - 1, len(coupons) - 1)] / 100
+        if i == years:
+            # 东财条款常写“到期赎回价含最后一期利息”，终值不重复加最后一期票息。
+            amount = maturity_redemption
+        years_left = max((pay_date - today).days / 365.0, 0.001)
+        flows.append({'date': pay_date.strftime('%Y-%m-%d'), 'years': years_left, 'amount': round(amount, 4)})
+    return flows
+
+
+def _solve_ytm(price, cashflows):
+    if price <= 0 or not cashflows:
+        return None
+
+    def pv(rate):
+        return sum(cf['amount'] / ((1 + rate) ** cf['years']) for cf in cashflows)
+
+    lo, hi = -0.95, 1.0
+    for _ in range(80):
+        mid = (lo + hi) / 2
+        if pv(mid) > price:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2
+
+
+def _calc_bond_floor_metrics(row, price):
+    """计算双低策略的防守参考指标：纯债价值估算、到期收益率估算。"""
+    par_value = safe_float(row.get('PAR_VALUE', row.get('par_value', 100))) or 100
+    cashflows = _build_bond_cashflows(
+        row.get('VALUE_DATE', row.get('value_date')),
+        row.get('EXPIRE_DATE', row.get('maturity_date')),
+        row.get('INTEREST_RATE_EXPLAIN', row.get('interest_rate_explain')),
+        row.get('REDEEM_CLAUSE', row.get('redeem_clause')),
+        par_value,
+    )
+    if not cashflows:
+        return {
+            'pure_bond_value': 0,
+            'ytm': None,
+            'bond_floor_discount_rate': _rating_discount_rate(row.get('RATING', row.get('rating'))),
+            'bond_cashflows': [],
+            'maturity_date': str(row.get('EXPIRE_DATE', row.get('maturity_date', '')) or ''),
+        }
+
+    discount_rate = _rating_discount_rate(row.get('RATING', row.get('rating')))
+    pure_value = sum(cf['amount'] / ((1 + discount_rate) ** cf['years']) for cf in cashflows)
+    ytm = _solve_ytm(price, cashflows)
+    return {
+        'pure_bond_value': round(pure_value, 2),
+        'ytm': round(ytm * 100, 2) if ytm is not None else None,
+        'bond_floor_discount_rate': round(discount_rate * 100, 2),
+        'bond_cashflows': cashflows,
+        'maturity_date': str(row.get('EXPIRE_DATE', row.get('maturity_date', '')) or ''),
+    }
+
+
 # ==================== 上游数据获取（直连 HTTP） ====================
+
+
+def _derive_conversion_metrics(row, quote_price=0):
+    """Build usable conversion metrics when the EM quote fields are incomplete."""
+    stock_price = safe_float(row.get('CONVERT_STOCK_PRICE', 0))
+    if stock_price <= 0:
+        stock_price = safe_float(row.get('CONVERT_STOCK_PRICEHQ', 0))
+    if stock_price <= 0:
+        stock_price = safe_float(quote_price)
+
+    conversion_value = safe_float(row.get('TRANSFER_VALUE', 0))
+    conversion_price = safe_float(row.get('TRANSFER_PRICE', 0))
+
+    # TRANSFER_PRICE is frequently blank for listed bonds. TRANSFER_VALUE follows
+    # conversion_value = stock_price / conversion_price * 100, so recover the
+    # current conversion price from the live underlying quote when possible.
+    if conversion_price <= 0 and stock_price > 0 and conversion_value > 0:
+        conversion_price = stock_price * 100 / conversion_value
+    if conversion_value <= 0 and stock_price > 0 and conversion_price > 0:
+        conversion_value = stock_price / conversion_price * 100
+
+    force_trigger_price = safe_float(row.get('REDEEM_TRIG_PRICE', 0))
+    if force_trigger_price <= 0 and conversion_price > 0:
+        force_trigger_price = conversion_price * 1.3
+
+    # RESALE_TRIG_PRICE is the conditional put-back threshold, not the downward
+    # revision benchmark. The strategy continues to use its documented 85% rule.
+    revise_trigger_price = conversion_price * 0.85 if conversion_price > 0 else 0
+
+    return {
+        'stock_price': round(stock_price, 4) if stock_price > 0 else 0,
+        'conversion_price': round(conversion_price, 4) if conversion_price > 0 else 0,
+        'conversion_value': round(conversion_value, 4) if conversion_value > 0 else 0,
+        'force_trigger_price': round(force_trigger_price, 4) if force_trigger_price > 0 else 0,
+        'revise_trigger_price': round(revise_trigger_price, 4) if revise_trigger_price > 0 else 0,
+    }
 
 
 def _get_sina_bonds():
@@ -203,26 +408,43 @@ def _merge_bond_data():
     em_df = _get_em_bonds()
     if em_df is not None and not em_df.empty:
         em_map = {}
+        stock_codes = list({
+            str(row.get('CONVERT_STOCK_CODE', ''))
+            for _, row in em_df.iterrows()
+            if row.get('CONVERT_STOCK_CODE')
+        })
+        stock_quotes = _fetch_sina_stock_quotes(stock_codes)
         for _, row in em_df.iterrows():
             code = str(row.get('SECURITY_CODE', ''))
+            stock_code = str(row.get('CONVERT_STOCK_CODE', ''))
+            metrics = _derive_conversion_metrics(
+                row,
+                stock_quotes.get(stock_code, {}).get('price', 0),
+            )
             em_map[code] = {
-                'stock_code': str(row.get('CONVERT_STOCK_CODE', '')),
+                'stock_code': stock_code,
                 'stock_name': str(row.get('SECURITY_SHORT_NAME', '')),
-                'stock_price': safe_float(row.get('CONVERT_STOCK_PRICE', 0)),
-                'conversion_price': safe_float(row.get('TRANSFER_PRICE', 0)),
-                'conversion_value': safe_float(row.get('TRANSFER_VALUE', 0)),
+                **metrics,
                 'rating': str(row.get('RATING', '')),
                 'issue_size': safe_float(row.get('ACTUAL_ISSUE_SCALE', 0)),
                 'list_date': str(row.get('LISTING_DATE', '')),
+                'value_date': str(row.get('VALUE_DATE', '')),
+                'maturity_date': str(row.get('EXPIRE_DATE', '')),
+                'interest_rate_explain': str(row.get('INTEREST_RATE_EXPLAIN', '')),
+                'redeem_clause': str(row.get('REDEEM_CLAUSE', '')),
+                'par_value': safe_float(row.get('PAR_VALUE', 100)),
             }
 
         for col in ['stock_code', 'stock_name', 'stock_price', 'conversion_price',
-                     'conversion_value', 'rating',
-                     'issue_size', 'list_date']:
+                     'conversion_value', 'force_trigger_price', 'revise_trigger_price',
+                     'rating',
+                     'issue_size', 'list_date', 'value_date', 'maturity_date',
+                     'interest_rate_explain', 'redeem_clause', 'par_value']:
             df[col] = df['bond_code'].map(lambda c: em_map.get(c, {}).get(col, None if col in ['stock_name', 'rating', 'list_date', 'stock_code'] else 0))
 
         # 填充 NaN
-        for col in ['stock_code', 'stock_name', 'rating', 'list_date']:
+        for col in ['stock_code', 'stock_name', 'rating', 'list_date', 'value_date',
+                    'maturity_date', 'interest_rate_explain', 'redeem_clause']:
             df[col] = df[col].fillna('')
 
         # EM 的 TRANSFER_PREMIUM_RATIO 实测返回占位值 100.0（CURRENT_BOND_PRICE/CONVERT_STOCK_PRICE 均为 None），
@@ -239,12 +461,22 @@ def _merge_bond_data():
                 df.at[idx, 'premium_rate'] = 0
                 df.at[idx, 'double_low'] = 0
 
+            metrics = _calc_bond_floor_metrics(row, price)
+            df.at[idx, 'pure_bond_value'] = metrics['pure_bond_value']
+            df.at[idx, 'ytm'] = metrics['ytm'] if metrics['ytm'] is not None else 0
+            df.at[idx, 'bond_floor_discount_rate'] = metrics['bond_floor_discount_rate']
+            df.at[idx, 'bond_cashflows'] = json.dumps(metrics['bond_cashflows'], ensure_ascii=False)
+            if metrics.get('maturity_date'):
+                df.at[idx, 'maturity_date'] = metrics['maturity_date']
+
     else:
         # 无 EM 数据时，所有转股指标置零
         for col in ['stock_code', 'stock_name', 'stock_price', 'conversion_price',
-                     'conversion_value', 'premium_rate', 'rating',
-                     'issue_size', 'list_date', 'double_low']:
-            if col in ['stock_code', 'stock_name', 'rating', 'list_date']:
+                     'conversion_value', 'force_trigger_price', 'revise_trigger_price',
+                     'premium_rate', 'rating',
+                     'issue_size', 'list_date', 'double_low', 'pure_bond_value',
+                     'ytm', 'bond_floor_discount_rate', 'bond_cashflows', 'maturity_date']:
+            if col in ['stock_code', 'stock_name', 'rating', 'list_date', 'bond_cashflows', 'maturity_date']:
                 df[col] = ''
             else:
                 df[col] = 0
@@ -331,9 +563,16 @@ def get_convertible_bond_list():
                 'rating': str(row.get('rating', '')),
                 'stock_price': safe_float(row.get('stock_price', 0)),
                 'conversion_price': safe_float(row.get('conversion_price', 0)),
+                'force_trigger_price': safe_float(row.get('force_trigger_price', 0)),
+                'revise_trigger_price': safe_float(row.get('revise_trigger_price', 0)),
                 'remaining_size': safe_float(row.get('issue_size', 0)),
                 'volume': safe_float(row.get('volume', 0)),
                 'amount': safe_float(row.get('amount', 0)),
+                'pure_bond_value': safe_float(row.get('pure_bond_value', 0)),
+                'ytm': safe_float(row.get('ytm', 0)),
+                'bond_floor_discount_rate': safe_float(row.get('bond_floor_discount_rate', 0)),
+                'bond_cashflows': _parse_cashflows(row.get('bond_cashflows', '')),
+                'maturity_date': str(row.get('maturity_date', '')),
             })
         return result
     except Exception as e:
@@ -367,9 +606,16 @@ def get_convertible_bond_detail(code: str) -> dict:
             'rating': str(row.get('rating', '')),
             'stock_price': safe_float(row.get('stock_price', 0)),
             'conversion_price': safe_float(row.get('conversion_price', 0)),
+            'force_trigger_price': safe_float(row.get('force_trigger_price', 0)),
+            'revise_trigger_price': safe_float(row.get('revise_trigger_price', 0)),
             'remaining_size': safe_float(row.get('issue_size', 0)),
             'volume': safe_float(row.get('volume', 0)),
             'amount': safe_float(row.get('amount', 0)),
+            'pure_bond_value': safe_float(row.get('pure_bond_value', 0)),
+            'ytm': safe_float(row.get('ytm', 0)),
+            'bond_floor_discount_rate': safe_float(row.get('bond_floor_discount_rate', 0)),
+            'bond_cashflows': _parse_cashflows(row.get('bond_cashflows', '')),
+            'maturity_date': str(row.get('maturity_date', '')),
         }
 
         # 补充 EM 详情字段（申购日期/中签率等）
@@ -450,6 +696,18 @@ def get_convertible_bond_signals():
                     'premium_rate': safe_float(row['premium_rate']),
                     'double_low': safe_float(row['double_low']),
                     'rating': str(row.get('rating', '')),
+                    'stock_price': safe_float(row.get('stock_price', 0)),
+                    'conversion_price': safe_float(row.get('conversion_price', 0)),
+                    'force_trigger_price': safe_float(row.get('force_trigger_price', 0)),
+                    'revise_trigger_price': safe_float(row.get('revise_trigger_price', 0)),
+                    'pure_bond_value': safe_float(row.get('pure_bond_value', 0)),
+                    'ytm': safe_float(row.get('ytm', 0)),
+                    'bond_floor_discount_rate': safe_float(row.get('bond_floor_discount_rate', 0)),
+                    'bond_cashflows': _parse_cashflows(row.get('bond_cashflows', '')),
+                    'maturity_date': str(row.get('maturity_date', '')),
+                    'remaining_size': safe_float(row.get('issue_size', 0)),
+                    'volume': safe_float(row.get('volume', 0)),
+                    'amount': safe_float(row.get('amount', 0)),
                 })
             return records
 
