@@ -1,107 +1,220 @@
 # -*- coding: utf-8 -*-
-"""LOF/ETF 基金数据服务 — 直连东方财富 HTTP API
+"""LOF premium-arbitrage market and execution-rule data.
 
-数据源：东方财富 push2.eastmoney.com（LOF + ETF 实时行情，含净值和溢价率）
-替代原新浪 JSONP API（新浪不提供净值/溢价率）。
-申购状态通过东方财富基金详情 API 获取。
-连续溢价天数通过本地 JSON 快照计算。
+This module intentionally covers only LOFs. ETFs, synthetic history and
+exchange-level settlement guesses are excluded because none of them prove an
+off-exchange subscription can be sold as an on-exchange LOF position.
 """
 
 import json
 import logging
-import os
 import time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from services.http_client import em_get
 from utils.convert import safe_float
 
 logger = logging.getLogger('trading_toolkit')
 
-# ==================== 东方财富 push2 行情端点 ====================
-
-_EM_PUSH_URL = 'https://push2.eastmoney.com/api/qt/clist/get'
-
-# 分类码: LOF基金=b:MK0404, ETF基金=b:MK0403
+_CST = timezone(timedelta(hours=8))
+_EM_LIST_URL = 'https://push2.eastmoney.com/api/qt/clist/get'
+_EM_KLINE_URL = 'https://push2his.eastmoney.com/api/qt/stock/kline/get'
 _LOF_BOARD = 'b:MK0404'
-_ETF_BOARD = 'b:MK0403'
-
-# 字段: f12=代码, f14=名称, f2=最新价, f3=涨跌幅, f5=成交量, f6=成交额,
-#        f161=基金净值, f168=溢价率
-_EM_FIELDS = 'f12,f14,f2,f3,f5,f6,f161,f168'
-
-# ==================== 东方财富基金详情端点（申购状态） ====================
-
-_EM_FUND_DETAIL_URL = 'https://fundmobapi.eastmoney.com/FundMNewApi/FundMNFundInfo'
-
-# 申购状态缓存: { code: { 'status': '不限', 'ts': timestamp } }
-_purchase_cache = {}
-_PURCHASE_CACHE_TTL = 3600  # 1 小时
-
-# ==================== 连续溢价快照 ====================
-
-_SNAPSHOT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
-_SNAPSHOT_FILE = os.path.join(_SNAPSHOT_DIR, 'lof_premium_snapshot.json')
-_SNAPSHOT_MAX_DAYS = 30
+_RULES_FILE = Path(__file__).resolve().parents[1] / 'data' / 'lof_execution_rules.json'
+_RULE_PATH_MAX_AGE_DAYS = 30
+_SUBSCRIPTION_MAX_AGE_DAYS = 1
+_MAX_LIQUIDITY_LOOKUPS = 20
+_LIQUIDITY_CACHE_TTL_SECONDS = 60 * 60
+_liquidity_cache = {}
 
 
-def _fetch_em_fund_list(board):
-    """从东方财富获取基金实时行情列表。
+def _now():
+    return datetime.now(_CST)
 
-    替代原 _fetch_sina_fund_list()，使用 push2 API。
-    """
+
+def _parse_iso(value):
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+        return parsed.astimezone(_CST) if parsed.tzinfo else parsed.replace(tzinfo=_CST)
+    except ValueError:
+        return None
+
+
+def _is_current(value, max_age_days, now=None):
+    checked_at = _parse_iso(value)
+    if not checked_at:
+        return False
+    now = now or _now()
+    return checked_at <= now <= checked_at + timedelta(days=max_age_days)
+
+
+def _not_expired(value, now=None):
+    expiry = _parse_iso(value)
+    return bool(expiry and (now or _now()) <= expiry)
+
+
+def _field_evidence(rule, field, max_age_days, now):
+    source = (rule.get('sources') or {}).get(field) or {}
+    checked_at = source.get('checked_at') or rule.get('checked_at')
+    checked = _parse_iso(checked_at)
+    if max_age_days == _SUBSCRIPTION_MAX_AGE_DAYS:
+        current = bool(checked and checked.date() == now.date())
+    else:
+        current = _is_current(checked_at, max_age_days, now)
+    current = bool(source.get('url')) and current
+    return {
+        'url': source.get('url'),
+        'checked_at': checked_at,
+        'current': current,
+        'source_name': source.get('name'),
+    }
+
+
+def _load_execution_rules():
+    """Load locally curated execution evidence without treating it as market data."""
+    try:
+        with _RULES_FILE.open('r', encoding='utf-8') as rule_file:
+            data = json.load(rule_file)
+        return data.get('funds') or {}
+    except FileNotFoundError:
+        return {}
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning('[LOF] unable to load execution rules: %s', exc)
+        return {}
+
+
+def _resolve_execution_rule(code, now=None, rules=None):
+    """Return the dated, field-level evidence for a fund's execution path."""
+    now = now or _now()
+    rule = (rules if rules is not None else _load_execution_rules()).get(str(code), {})
+    override = rule.get('manual_override') or {}
+    override_active = _not_expired(override.get('expires_at'), now)
+
+    subscription = _field_evidence(rule, 'subscription', _SUBSCRIPTION_MAX_AGE_DAYS, now)
+    custody = _field_evidence(rule, 'custody_transfer', _RULE_PATH_MAX_AGE_DAYS, now)
+    sell_date = _field_evidence(rule, 'sell_available_date', _RULE_PATH_MAX_AGE_DAYS, now)
+
+    subscription_open = rule.get('subscription_status') == 'open' and subscription['current']
+    subscription_limit = rule.get('subscription_limit') if subscription_open else None
+    custody_supported = rule.get('custody_transfer') is True and custody['current']
+    expected_sell_date = rule.get('sell_available_date') if sell_date['current'] else None
+
+    if override_active:
+        subscription_open = override.get('subscription_open', subscription_open)
+        subscription_limit = override.get('subscription_limit', subscription_limit)
+        custody_supported = override.get('custody_transfer', custody_supported)
+        expected_sell_date = override.get('sell_available_date', expected_sell_date)
+
+    sell_date_value = _parse_iso(expected_sell_date)
+    if sell_date_value and sell_date_value.date() < now.date():
+        expected_sell_date = None
+
+    trade_path_verified = bool(subscription_open and custody_supported and expected_sell_date)
+    return {
+        'subscription_status': '开放申购' if subscription_open else '待核验',
+        'subscription_open': subscription_open,
+        'subscription_limit': subscription_limit,
+        'custody_transfer': custody_supported,
+        'expected_sell_date': expected_sell_date,
+        'trade_path_verified': trade_path_verified,
+        'manual_override_active': override_active,
+        'evidence': {
+            'subscription': subscription,
+            'custody_transfer': custody,
+            'sell_available_date': sell_date,
+        },
+    }
+
+
+def _timestamp_from_em(value):
+    try:
+        timestamp = int(value)
+    except (TypeError, ValueError):
+        return None
+    if timestamp <= 0:
+        return None
+    if timestamp > 10_000_000_000:
+        timestamp /= 1000
+    return datetime.fromtimestamp(timestamp, tz=_CST).isoformat()
+
+
+def _fetch_em_lof_rows():
     params = {
         'pn': 1,
-        'pz': 500,
+        'pz': 5000,
         'po': 1,
         'np': 1,
         'fltt': 2,
         'invt': 2,
-        'fs': board,
-        'fields': _EM_FIELDS,
+        'fid': 'f168',
+        'fs': _LOF_BOARD,
+        'fields': 'f2,f3,f5,f6,f12,f13,f14,f124,f161,f168',
     }
     try:
-        resp = em_get(_EM_PUSH_URL, params=params, timeout=15)
-        if resp.status_code != 200:
-            logger.warning(f'[EmLof] HTTP {resp.status_code} (board={board})')
+        response = em_get(_EM_LIST_URL, params=params, timeout=20)
+        if response.status_code != 200:
             return []
-        data = resp.json()
-        if not data or not data.get('data') or not data['data'].get('diff'):
-            return []
-        return data['data']['diff']
-    except Exception as e:
-        logger.warning(f'[EmLof] 获取基金列表失败(board={board}): {e}')
+        return (response.json().get('data') or {}).get('diff') or []
+    except Exception as exc:
+        logger.warning('[LOF] market fetch failed: %s', exc)
         return []
 
 
-def _parse_em_fund_row(row):
-    """解析单条东方财富基金行情数据。
+def _market_for_code(code):
+    return '1' if str(code).startswith(('5', '6')) else '0'
 
-    字段: f12=代码, f14=名称, f2=最新价, f3=涨跌幅, f5=成交量,
-          f6=成交额, f161=基金净值, f168=溢价率
-    """
-    code = str(row.get('f12', '')).strip()
-    if not code:
-        return None
 
-    # 交易所: 5开头=沪, 1开头=深
-    if code.startswith('5'):
-        exchange = '沪'
-    elif code.startswith('1'):
-        exchange = '深'
-    else:
-        exchange = ''
+def _five_day_average_turnover(code):
+    """Fetch a bounded number of public daily K-lines and cache the result."""
+    cached = _liquidity_cache.get(code)
+    now_ts = time.time()
+    if cached and now_ts - cached['cached_at'] < _LIQUIDITY_CACHE_TTL_SECONDS:
+        return cached['value']
 
-    name = str(row.get('f14', '')).strip()
-    if not name:
-        return None
+    params = {
+        'secid': f'{_market_for_code(code)}.{code}',
+        'fields1': 'f1,f2,f3,f4,f5,f6',
+        'fields2': 'f51,f52,f53,f54,f55,f56',
+        'klt': 101,
+        'fqt': 1,
+        'lmt': 5,
+    }
+    value = None
+    try:
+        response = em_get(_EM_KLINE_URL, params=params, timeout=15)
+        klines = ((response.json().get('data') or {}).get('klines') or [])
+        amounts = []
+        for line in klines:
+            columns = str(line).split(',')
+            if len(columns) >= 6:
+                amount = safe_float(columns[5])
+                if amount > 0:
+                    amounts.append(amount)
+        if amounts:
+            value = round(sum(amounts) / len(amounts), 2)
+    except Exception as exc:
+        logger.info('[LOF] five-day turnover unavailable for %s: %s', code, exc)
 
+    _liquidity_cache[code] = {'cached_at': now_ts, 'value': value}
+    return value
+
+
+def _parse_row(row, rule, fetched_at):
+    code = str(row.get('f12') or '')
     price = safe_float(row.get('f2'))
     valuation = safe_float(row.get('f161'))
     premium = safe_float(row.get('f168'))
+    quote_time = _timestamp_from_em(row.get('f124'))
+    quote_date = _parse_iso(quote_time).date().isoformat() if quote_time else None
+    valid_quote = bool(price > 0 and valuation > 0 and quote_date == fetched_at.date().isoformat())
+    exchange = '沪' if str(row.get('f13')) == '1' else '深'
 
     return {
         '代码': code,
-        '名称': name,
+        '名称': str(row.get('f14') or '').strip(),
         '交易所': exchange,
         '最新价': price,
         '涨跌幅': safe_float(row.get('f3')),
@@ -109,410 +222,64 @@ def _parse_em_fund_row(row):
         '成交额': safe_float(row.get('f6')),
         '估值': valuation,
         '溢价率': premium,
-        '连续溢价': 0,  # 由快照计算填充
-        '申购状态': '不限',  # 由 _enrich_purchase_status 填充
+        '行情时间': quote_time,
+        '净值日期': quote_date,
+        '净值来源': '东方财富行情快照',
+        '报价有效': valid_quote,
+        '申购状态': rule['subscription_status'],
+        '可申购': rule['subscription_open'],
+        '单账户限额': rule['subscription_limit'],
+        '可转托管': rule['custody_transfer'],
+        '预计可卖出日': rule['expected_sell_date'],
+        '交易路径已验证': rule['trade_path_verified'],
+        '规则证据': rule['evidence'],
+        '人工覆盖有效': rule['manual_override_active'],
+        '近5日平均成交额': None,
     }
 
-
-# ==================== 连续溢价快照逻辑 ====================
-
-def _load_snapshot():
-    """加载本地溢价快照 JSON 文件。"""
-    try:
-        if os.path.exists(_SNAPSHOT_FILE):
-            with open(_SNAPSHOT_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-    except Exception as e:
-        logger.warning(f'[LofSnapshot] 加载快照失败: {e}')
-    return {}
-
-
-def _save_snapshot(snapshot):
-    """保存溢价快照到 JSON 文件。"""
-    try:
-        os.makedirs(_SNAPSHOT_DIR, exist_ok=True)
-        with open(_SNAPSHOT_FILE, 'w', encoding='utf-8') as f:
-            json.dump(snapshot, f, ensure_ascii=False)
-    except Exception as e:
-        logger.warning(f'[LofSnapshot] 保存快照失败: {e}')
-
-
-def _update_premium_snapshot(fund_list):
-    """更新今日溢价快照，并返回每个基金的连续溢价天数。
-
-    快照结构: { "2026-07-09": { "161725": true, ... }, ... }
-    true = 当日溢价率 > 0
-    """
-    today = time.strftime('%Y-%m-%d')
-    snapshot = _load_snapshot()
-
-    # 如果今天还没有快照，创建今日快照
-    if today not in snapshot:
-        today_data = {}
-        for item in fund_list:
-            code = item.get('代码', '')
-            premium = item.get('溢价率', 0)
-            if code:
-                today_data[code] = premium > 0
-        snapshot[today] = today_data
-        # 清理超过 30 天的旧快照
-        sorted_dates = sorted(snapshot.keys())
-        while len(sorted_dates) > _SNAPSHOT_MAX_DAYS:
-            oldest = sorted_dates.pop(0)
-            snapshot.pop(oldest, None)
-        _save_snapshot(snapshot)
-
-    # 计算每个基金的连续溢价天数
-    sorted_dates = sorted(snapshot.keys(), reverse=True)
-    consecutive_map = {}
-
-    # 从今天往前数连续溢价天数
-    all_codes = set()
-    for d in sorted_dates:
-        all_codes.update(snapshot[d].keys())
-
-    for code in all_codes:
-        count = 0
-        for d in sorted_dates:
-            if snapshot[d].get(code, False):
-                count += 1
-            else:
-                break
-        consecutive_map[code] = count
-
-    return consecutive_map
-
-
-# ==================== 申购状态获取 ====================
-
-def _fetch_purchase_status(code):
-    """从东方财富基金详情 API 获取申购状态。
-
-    返回: '不限' / '暂停' / '限100'
-    """
-    params = {
-        'FundCode': code,
-        'deviceid': '1',
-    }
-    try:
-        resp = em_get(_EM_FUND_DETAIL_URL, params=params, timeout=10)
-        if resp.status_code != 200:
-            return '不限'
-        data = resp.json()
-        # 列表数据在 Expansion 下的 DT_Serializer
-        expansion = data.get('Expansion', {}) or {}
-        purchase_status = expansion.get('PURCHASE', '')
-        if not purchase_status:
-            return '不限'
-
-        if '暂停' in purchase_status or '停止' in purchase_status:
-            return '暂停'
-        if '限制' in purchase_status or '限' in purchase_status:
-            return '限100'
-        return '不限'
-    except Exception:
-        return '不限'
-
-
-def _enrich_purchase_status(fund_list):
-    """批量获取申购状态并填充到列表中。
-
-    使用模块级缓存，TTL 1 小时。避免每次请求都逐个调用。
-    """
-    now = time.time()
-    codes_to_fetch = []
-
-    for item in fund_list:
-        code = item.get('代码', '')
-        cached = _purchase_cache.get(code)
-        if cached and (now - cached['ts']) < _PURCHASE_CACHE_TTL:
-            item['申购状态'] = cached['status']
-        else:
-            codes_to_fetch.append((item, code))
-
-    for item, code in codes_to_fetch:
-        status = _fetch_purchase_status(code)
-        item['申购状态'] = status
-        _purchase_cache[code] = { 'status': status, 'ts': now }
-
-
-# ==================== 对外接口 ====================
 
 def get_lof_list():
-    """获取 LOF/ETF 基金列表（含净值、溢价率、连续溢价、申购状态）"""
-    try:
-        lof_rows = _fetch_em_fund_list(_LOF_BOARD)
-        etf_rows = _fetch_em_fund_list(_ETF_BOARD)
-        all_raw = lof_rows + etf_rows
+    """Return LOF-only quotes enriched with auditable execution-rule evidence."""
+    fetched_at = _now()
+    rows = _fetch_em_lof_rows()
+    rules = _load_execution_rules()
+    result = []
+    for row in rows:
+        code = str(row.get('f12') or '')
+        if not code:
+            continue
+        result.append(_parse_row(row, _resolve_execution_rule(code, fetched_at, rules), fetched_at))
 
-        if not all_raw:
-            return []
+    # K-line calls are intentionally bounded; absent history keeps a fund in observation.
+    candidates = sorted(
+        (
+            item for item in result
+            if item['报价有效'] and item['溢价率'] > 0 and item['交易路径已验证']
+        ),
+        key=lambda item: item['溢价率'],
+        reverse=True,
+    )[:_MAX_LIQUIDITY_LOOKUPS]
+    for item in candidates:
+        item['近5日平均成交额'] = _five_day_average_turnover(item['代码'])
 
-        result = []
-        for row in all_raw:
-            parsed = _parse_em_fund_row(row)
-            if parsed:
-                result.append(parsed)
-
-        if not result:
-            return []
-
-        # 填充连续溢价天数
-        try:
-            consecutive_map = _update_premium_snapshot(result)
-            for item in result:
-                code = item.get('代码', '')
-                item['连续溢价'] = consecutive_map.get(code, 0)
-        except Exception as e:
-            logger.warning(f'[LofList] 连续溢价计算失败: {e}')
-
-        # 填充申购状态（异步降级：失败时保持默认"不限"）
-        try:
-            _enrich_purchase_status(result)
-        except Exception as e:
-            logger.warning(f'[LofList] 申购状态获取失败: {e}')
-
-        return result
-    except Exception as e:
-        logger.warning(f'获取LOF列表失败: {e}')
-        return []
+    return result
 
 
 def get_lof_opportunities():
-    """获取 LOF 套利机会（按真实溢价率排序）"""
-    try:
-        lof_list = get_lof_list()
-        if not lof_list:
-            return {'premium': [], 'discount': []}
-
-        sorted_premium = sorted(lof_list, key=lambda x: x.get('溢价率', 0), reverse=True)[:20]
-        sorted_discount = sorted(lof_list, key=lambda x: x.get('溢价率', 0))[:20]
-
-        return {
-            'premium': sorted_premium,
-            'discount': sorted_discount
-        }
-    except Exception as e:
-        logger.warning(f'获取LOF套利机会失败: {e}')
-        return {'premium': [], 'discount': []}
+    """Compatibility endpoint returning positive-premium LOFs, never ETFs or discounts."""
+    items = [item for item in get_lof_list() if item['溢价率'] > 0]
+    items.sort(key=lambda item: item['溢价率'], reverse=True)
+    return {'premium': items, 'discount': []}
 
 
 def get_lof_market_summary():
-    """获取 LOF 市场概览（含溢价率统计）"""
-    try:
-        lof_list = get_lof_list()
-        if not lof_list:
-            return None
-
-        premiums = [item.get('溢价率', 0) for item in lof_list]
-        change_pcts = [item.get('涨跌幅', 0) for item in lof_list]
-        up_count = sum(1 for c in change_pcts if c > 0)
-        down_count = sum(1 for c in change_pcts if c < 0)
-        positive_count = sum(1 for p in premiums if p > 0)
-        discount_count = sum(1 for p in premiums if p < 0)
-        total_amount = sum(item.get('成交额', 0) for item in lof_list)
-
-        # 按交易所分组统计平均溢价
-        boards = {}
-        for item in lof_list:
-            ex = item.get('交易所', '其他')
-            if not ex:
-                ex = '其他'
-            if ex not in boards:
-                boards[ex] = { 'count': 0, 'premium_sum': 0 }
-            boards[ex]['count'] += 1
-            boards[ex]['premium_sum'] += item.get('溢价率', 0)
-
-        top_board = None
-        top_board_avg = -float('inf')
-        for board, stats in boards.items():
-            avg = stats['premium_sum'] / stats['count'] if stats['count'] > 0 else 0
-            if avg > top_board_avg:
-                top_board_avg = avg
-                top_board = board
-
-        return {
-            'count': len(lof_list),
-            'up_count': up_count,
-            'down_count': down_count,
-            'up_rate': round(up_count / len(lof_list) * 100, 1) if lof_list else 0,
-            'total_amount': round(total_amount / 1e8, 2),
-            'avg_change': round(sum(change_pcts) / len(change_pcts), 2) if change_pcts else 0,
-            # 溢价率统计
-            'positive_count': positive_count,
-            'discount_count': discount_count,
-            'top_premium': round(max(premiums), 2) if premiums else 0,
-            'premium_avg': round(sum(premiums) / len(premiums), 2) if premiums else 0,
-            'top_premium_board': (top_board + '市') if top_board else '--',
-            'top_board_premium_avg': round(top_board_avg, 2) if top_board else None,
-        }
-    except Exception as e:
-        logger.warning(f'获取LOF市场概览失败: {e}')
-        return None
-# -*- coding: utf-8 -*-
-"""LOF/ETF 基金数据服务 — 直连新浪 JSONP HTTP API，零 akshare 依赖
-
-数据源：新浪财经 vip.stock.finance.sina.com.cn（LOF + ETF 实时行情，不封 IP）
-替代 ak.fund_etf_category_sina(symbol='LOF基金') / ak.fund_lof_spot_em()。
-"""
-
-import json
-import logging
-
-from services.http_client import sina_get
-from utils.convert import safe_float
-
-logger = logging.getLogger('trading_toolkit')
-
-# 新浪 LOF/ETF JSONP 端点（与封闭式基金同一 API，node 不同）
-_SINA_FUND_URL = (
-    "https://vip.stock.finance.sina.com.cn/quotes_service/api/jsonp.php/"
-    "IO.XSRV2.CallbackList['da_yPT46_Ll7K6WD']/Market_Center.getHQNodeDataSimple"
-)
-
-# node 映射：lof_hq_fund=LOF基金, etf_hq_fund=ETF基金
-_LOF_NODE = 'lof_hq_fund'
-_ETF_NODE = 'etf_hq_fund'
-
-
-def _parse_sina_jsonp(text):
-    """解析新浪 JSONP 响应，提取 JSON 数组。"""
-    if not text:
-        return []
-    start = text.find('([')
-    if start < 0:
-        return []
-    inner = text[start + 1:-2]
-    try:
-        return json.loads(inner)
-    except (json.JSONDecodeError, ValueError):
-        return []
-
-
-def _fetch_sina_fund_list(node):
-    """从新浪获取基金实时行情列表。
-
-    替代 ak.fund_etf_category_sina(symbol=...)，直连新浪 JSONP API。
-    """
-    params = {
-        'page': '1',
-        'num': '5000',
-        'sort': 'symbol',
-        'asc': '0',
-        'node': node,
-        '[object HTMLDivElement]': 'qvvne',
-    }
-    try:
-        resp = sina_get(_SINA_FUND_URL, params=params, timeout=15)
-        if resp.status_code != 200:
-            logger.warning(f'[SinaLof] HTTP {resp.status_code}')
-            return []
-        return _parse_sina_jsonp(resp.text)
-    except Exception as e:
-        logger.warning(f'[SinaLof] 获取基金列表失败(node={node}): {e}')
-        return []
-
-
-def _parse_fund_row(row):
-    """解析单条基金行情数据（新浪字段名映射）。
-
-    新浪字段：symbol, name, trade, pricechange, changepercent,
-              buy, sell, settlement, open, high, low, volume, amount, code
-    """
-    raw_symbol = str(row.get('symbol', ''))
-    code = raw_symbol[2:] if raw_symbol.startswith(('sh', 'sz')) else raw_symbol
-    if not code:
-        return None
-
-    if code.startswith('5'):
-        exchange = '沪'
-    elif code.startswith('1'):
-        exchange = '深'
-    else:
-        exchange = ''
-
+    items = get_lof_list()
+    premiums = [item['溢价率'] for item in items]
     return {
-        '代码': code,
-        '名称': str(row.get('name', '')).strip(),
-        '交易所': exchange,
-        '最新价': safe_float(row.get('trade')),
-        '涨跌幅': safe_float(row.get('changepercent')),
-        '涨跌额': safe_float(row.get('pricechange')),
-        '成交量': safe_float(row.get('volume')),
-        '成交额': safe_float(row.get('amount')),
-        '昨收': safe_float(row.get('settlement')),
-        '今开': safe_float(row.get('open')),
-        '最高': safe_float(row.get('high')),
-        '最低': safe_float(row.get('low')),
-        # 新浪不提供估值/溢价率，留空待后续补充
-        '估值': 0,
-        '溢价率': 0,
-        '连续溢价': 0,
-        '申购状态': '不限',
+        'count': len(items),
+        'positive_count': sum(1 for premium in premiums if premium > 0),
+        'valid_quote_count': sum(1 for item in items if item['报价有效']),
+        'verified_path_count': sum(1 for item in items if item['交易路径已验证']),
+        'top_premium': round(max(premiums), 2) if premiums else 0,
+        'premium_avg': round(sum(premiums) / len(premiums), 2) if premiums else 0,
     }
-
-
-def get_lof_list():
-    """获取 LOF/ETF 基金列表（含实时价格，不含溢价率——新浪不提供）"""
-    try:
-        lof_rows = _fetch_sina_fund_list(_LOF_NODE)
-        etf_rows = _fetch_sina_fund_list(_ETF_NODE)
-        all_rows = lof_rows + etf_rows
-
-        if not all_rows:
-            return []
-
-        result = []
-        for row in all_rows:
-            parsed = _parse_fund_row(row)
-            if parsed:
-                result.append(parsed)
-        return result
-    except Exception as e:
-        logger.warning(f'获取LOF列表失败: {e}')
-        return []
-
-
-def get_lof_opportunities():
-    """获取 LOF 套利机会（新浪不提供溢价率，返回空列表）"""
-    try:
-        lof_list = get_lof_list()
-        if not lof_list:
-            return {'premium': [], 'discount': []}
-
-        # 新浪不提供溢价率，按涨跌幅排序作为替代
-        sorted_premium = sorted(lof_list, key=lambda x: x['涨跌幅'], reverse=True)[:20]
-        sorted_discount = sorted(lof_list, key=lambda x: x['涨跌幅'])[:20]
-
-        return {
-            'premium': sorted_premium,
-            'discount': sorted_discount
-        }
-    except Exception as e:
-        logger.warning(f'获取LOF套利机会失败: {e}')
-        return {'premium': [], 'discount': []}
-
-
-def get_lof_market_summary():
-    """获取 LOF 市场概览"""
-    try:
-        lof_list = get_lof_list()
-        if not lof_list:
-            return None
-
-        change_pcts = [item['涨跌幅'] for item in lof_list]
-        up_count = sum(1 for c in change_pcts if c > 0)
-        down_count = sum(1 for c in change_pcts if c < 0)
-        total_amount = sum(item.get('成交额', 0) for item in lof_list)
-
-        return {
-            'count': len(lof_list),
-            'up_count': up_count,
-            'down_count': down_count,
-            'up_rate': round(up_count / len(lof_list) * 100, 1) if lof_list else 0,
-            'total_amount': round(total_amount / 1e8, 2),  # 转为亿元
-            'avg_change': round(sum(change_pcts) / len(change_pcts), 2) if change_pcts else 0,
-        }
-    except Exception as e:
-        logger.warning(f'获取LOF市场概览失败: {e}')
-        return None

@@ -44,11 +44,22 @@ def normalize_lof(row: dict) -> dict:
         'change_pct': float(row.get('涨跌幅', 0)),
         'valuation': float(row.get('估值', 0)),
         'premium': float(row.get('溢价率', 0)),
-        'consecutive_premium': int(row.get('连续溢价', 0)),
         'limit_status': str(row.get('申购状态', '')),
         'exchange': exchange,
         'volume': round(float(row.get('成交量', 0)) / 10000, 2),
         'amount': round(float(row.get('成交额', 0)) / 10000, 2),
+        'quote_at': row.get('行情时间'),
+        'nav_date': row.get('净值日期'),
+        'nav_source': str(row.get('净值来源', '')),
+        'valid_quote': bool(row.get('报价有效')),
+        'subscription_open': bool(row.get('可申购')),
+        'subscription_limit': row.get('单账户限额'),
+        'custody_transfer': bool(row.get('可转托管')),
+        'expected_sell_date': row.get('预计可卖出日'),
+        'trade_path_verified': bool(row.get('交易路径已验证')),
+        'five_day_avg_turnover': row.get('近5日平均成交额'),
+        'verification_evidence': row.get('规则证据') or {},
+        'manual_override_active': bool(row.get('人工覆盖有效')),
     }
 
 
