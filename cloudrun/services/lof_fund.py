@@ -12,20 +12,22 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from services.http_client import em_get
+from services.http_client import em_get, tencent_get
 from utils.convert import safe_float
 
 logger = logging.getLogger('trading_toolkit')
 
 _CST = timezone(timedelta(hours=8))
-_EM_LIST_URL = 'https://push2.eastmoney.com/api/qt/clist/get'
-_EM_KLINE_URL = 'https://push2his.eastmoney.com/api/qt/stock/kline/get'
+_EM_LIST_URL = 'https://push2delay.eastmoney.com/api/qt/clist/get'
+_TENCENT_QUOTE_URL = 'https://qt.gtimg.cn/q='
+_TENCENT_KLINE_URL = 'https://web.ifzq.gtimg.cn/appstock/app/kline/kline'
 _LOF_BOARD = 'b:MK0404'
 _RULES_FILE = Path(__file__).resolve().parents[1] / 'data' / 'lof_execution_rules.json'
 _RULE_PATH_MAX_AGE_DAYS = 30
 _SUBSCRIPTION_MAX_AGE_DAYS = 1
-_MAX_LIQUIDITY_LOOKUPS = 20
+_MAX_LIQUIDITY_LOOKUPS = 30
 _LIQUIDITY_CACHE_TTL_SECONDS = 60 * 60
+_QUOTE_BATCH_SIZE = 50
 _liquidity_cache = {}
 
 
@@ -129,102 +131,143 @@ def _resolve_execution_rule(code, now=None, rules=None):
     }
 
 
-def _timestamp_from_em(value):
+def _timestamp_from_tencent(value):
+    """Parse Tencent's quote timestamp, which is supplied in China time."""
+    text = str(value or '').strip()
     try:
-        timestamp = int(value)
-    except (TypeError, ValueError):
+        return datetime.strptime(text, '%Y%m%d%H%M%S').replace(tzinfo=_CST).isoformat()
+    except ValueError:
         return None
-    if timestamp <= 0:
-        return None
-    if timestamp > 10_000_000_000:
-        timestamp /= 1000
-    return datetime.fromtimestamp(timestamp, tz=_CST).isoformat()
+
+
+def _latest_trading_weekday(now=None):
+    """Return the latest weekday with a mainland-market close.
+
+    The upstream quote is not updated on weekends. Keeping Friday's close
+    available on Saturday/Sunday is materially different from treating it as
+    a stale intraday quote. Public-holiday calendars are intentionally not
+    guessed here: an older quote remains visible but is marked for review.
+    """
+    current = (now or _now()).date()
+    while current.weekday() >= 5:
+        current -= timedelta(days=1)
+    return current
+
+
+def _quote_is_current(quote_time, now=None):
+    quote_at = _parse_iso(quote_time)
+    return bool(quote_at and quote_at.date() == _latest_trading_weekday(now))
+
+
+def _decode_tencent_rows(text):
+    """Decode the public, GBK Tencent multi-security quote response."""
+    rows = {}
+    for chunk in str(text or '').split(';'):
+        if '="' not in chunk:
+            continue
+        try:
+            values = chunk.split('"', 2)[1].split('~')
+        except IndexError:
+            continue
+        if len(values) < 82:
+            continue
+        code = str(values[2] or '').strip()
+        if code:
+            rows[code] = values
+    return rows
 
 
 def _fetch_em_lof_rows():
-    params = {
-        'pn': 1,
-        'pz': 5000,
+    """Fetch the LOF universe from Eastmoney's delayed quote directory.
+
+    The legacy push2 host can abruptly close direct connections. The delayed
+    directory remains public and is used only to enumerate the LOF board; the
+    executable quote fields come from Tencent below.
+    """
+    base_params = {
+        'pz': 100,
         'po': 1,
         'np': 1,
         'fltt': 2,
         'invt': 2,
-        'fid': 'f168',
+        'fid': 'f3',
         'fs': _LOF_BOARD,
-        'fields': 'f2,f3,f5,f6,f12,f13,f14,f124,f161,f168',
+        'fields': 'f12,f13,f14',
     }
+    result = []
+    total = None
+    page = 1
     try:
-        response = em_get(_EM_LIST_URL, params=params, timeout=20)
-        if response.status_code != 200:
-            return []
-        return (response.json().get('data') or {}).get('diff') or []
+        while total is None or len(result) < total:
+            response = em_get(_EM_LIST_URL, params={**base_params, 'pn': page}, timeout=20)
+            if response.status_code != 200:
+                break
+            data = response.json().get('data') or {}
+            total = int(data.get('total') or 0)
+            rows = data.get('diff') or []
+            if not rows:
+                break
+            result.extend(rows)
+            page += 1
+        return result
     except Exception as exc:
-        logger.warning('[LOF] market fetch failed: %s', exc)
+        logger.warning('[LOF] universe fetch failed: %s', exc)
         return []
 
 
-def _market_for_code(code):
-    return '1' if str(code).startswith(('5', '6')) else '0'
+def _fetch_tencent_quotes(universe):
+    """Fetch price, latest unit NAV and close timestamp in bounded batches."""
+    result = {}
+    for start in range(0, len(universe), _QUOTE_BATCH_SIZE):
+        batch = universe[start:start + _QUOTE_BATCH_SIZE]
+        symbols = []
+        for row in batch:
+            code = str(row.get('f12') or '')
+            if code:
+                exchange = 'sh' if str(row.get('f13')) == '1' else 'sz'
+                symbols.append(f'{exchange}{code}')
+        if not symbols:
+            continue
+        try:
+            response = tencent_get(f'{_TENCENT_QUOTE_URL}{",".join(symbols)}', timeout=20)
+            if response.status_code == 200:
+                result.update(_decode_tencent_rows(response.content.decode('gbk', 'replace')))
+        except Exception as exc:
+            logger.warning('[LOF] Tencent quote batch unavailable: %s', exc)
+    return result
 
 
-def _five_day_average_turnover(code):
-    """Fetch a bounded number of public daily K-lines and cache the result."""
-    cached = _liquidity_cache.get(code)
-    now_ts = time.time()
-    if cached and now_ts - cached['cached_at'] < _LIQUIDITY_CACHE_TTL_SECONDS:
-        return cached['value']
-
-    params = {
-        'secid': f'{_market_for_code(code)}.{code}',
-        'fields1': 'f1,f2,f3,f4,f5,f6',
-        'fields2': 'f51,f52,f53,f54,f55,f56',
-        'klt': 101,
-        'fqt': 1,
-        'lmt': 5,
-    }
-    value = None
-    try:
-        response = em_get(_EM_KLINE_URL, params=params, timeout=15)
-        klines = ((response.json().get('data') or {}).get('klines') or [])
-        amounts = []
-        for line in klines:
-            columns = str(line).split(',')
-            if len(columns) >= 6:
-                amount = safe_float(columns[5])
-                if amount > 0:
-                    amounts.append(amount)
-        if amounts:
-            value = round(sum(amounts) / len(amounts), 2)
-    except Exception as exc:
-        logger.info('[LOF] five-day turnover unavailable for %s: %s', code, exc)
-
-    _liquidity_cache[code] = {'cached_at': now_ts, 'value': value}
-    return value
-
-
-def _parse_row(row, rule, fetched_at):
+def _parse_row(row, quote_values, rule, fetched_at):
+    """Join LOF membership with Tencent's price and latest unit-NAV fields."""
     code = str(row.get('f12') or '')
-    price = safe_float(row.get('f2'))
-    valuation = safe_float(row.get('f161'))
-    premium = safe_float(row.get('f168'))
-    quote_time = _timestamp_from_em(row.get('f124'))
-    quote_date = _parse_iso(quote_time).date().isoformat() if quote_time else None
-    valid_quote = bool(price > 0 and valuation > 0 and quote_date == fetched_at.date().isoformat())
+    values = quote_values or []
+    price = safe_float(values[3] if len(values) > 3 else 0)
+    valuation = safe_float(values[81] if len(values) > 81 else 0)
+    quote_time = _timestamp_from_tencent(values[30] if len(values) > 30 else '')
+    premium = round((price / valuation - 1) * 100, 4) if price > 0 and valuation > 0 else 0
     exchange = '沪' if str(row.get('f13')) == '1' else '深'
+    security_type = str(values[61] if len(values) > 61 else '').strip()
+    valid_quote = bool(
+        security_type == 'LOF'
+        and price > 0
+        and valuation > 0
+        and _quote_is_current(quote_time, fetched_at)
+    )
 
     return {
         '代码': code,
-        '名称': str(row.get('f14') or '').strip(),
+        '名称': str(values[1] if len(values) > 1 else row.get('f14') or '').strip(),
         '交易所': exchange,
         '最新价': price,
-        '涨跌幅': safe_float(row.get('f3')),
-        '成交量': safe_float(row.get('f5')),
-        '成交额': safe_float(row.get('f6')),
+        '涨跌幅': safe_float(values[32] if len(values) > 32 else 0),
+        '成交量': safe_float(values[36] if len(values) > 36 else 0),
+        # Tencent reports the amount in 万元.
+        '成交额': safe_float(values[37] if len(values) > 37 else 0) * 10000,
         '估值': valuation,
         '溢价率': premium,
         '行情时间': quote_time,
-        '净值日期': quote_date,
-        '净值来源': '东方财富行情快照',
+        '净值日期': _parse_iso(quote_time).date().isoformat() if quote_time else None,
+        '净值来源': '腾讯财经基金行情（最新单位净值）',
         '报价有效': valid_quote,
         '申购状态': rule['subscription_status'],
         '可申购': rule['subscription_open'],
@@ -238,23 +281,68 @@ def _parse_row(row, rule, fetched_at):
     }
 
 
+def _market_for_code(code):
+    return 'sh' if str(code).startswith(('5', '6')) else 'sz'
+
+
+def _five_day_average_turnover(code):
+    """Calculate five-session turnover from Tencent daily bars."""
+    cached = _liquidity_cache.get(code)
+    now_ts = time.time()
+    if cached and now_ts - cached['cached_at'] < _LIQUIDITY_CACHE_TTL_SECONDS:
+        return cached['value']
+
+    value = None
+    params = {'param': f'{_market_for_code(code)}{code},day,,,5'}
+    try:
+        response = tencent_get(_TENCENT_KLINE_URL, params=params, timeout=15)
+        data = response.json().get('data') or {}
+        series = (data.get(f'{_market_for_code(code)}{code}') or {}).get('day') or []
+        amounts = []
+        for point in series[-5:]:
+            if len(point) < 6:
+                continue
+            close = safe_float(point[2])
+            volume = safe_float(point[5])
+            if close > 0 and volume > 0:
+                amounts.append(close * volume)
+        if amounts:
+            value = round(sum(amounts) / len(amounts), 2)
+    except Exception as exc:
+        logger.info('[LOF] five-day turnover unavailable for %s: %s', code, exc)
+
+    _liquidity_cache[code] = {'cached_at': now_ts, 'value': value}
+    return value
+
+
 def get_lof_list():
     """Return LOF-only quotes enriched with auditable execution-rule evidence."""
     fetched_at = _now()
     rows = _fetch_em_lof_rows()
+    quotes = _fetch_tencent_quotes(rows)
     rules = _load_execution_rules()
     result = []
     for row in rows:
         code = str(row.get('f12') or '')
-        if not code:
+        quote_values = quotes.get(code)
+        if not code or not quote_values:
             continue
-        result.append(_parse_row(row, _resolve_execution_rule(code, fetched_at, rules), fetched_at))
+        item = _parse_row(
+            row,
+            quote_values,
+            _resolve_execution_rule(code, fetched_at, rules),
+            fetched_at,
+        )
+        # The market-board directory is only a universe. Tencent's explicit
+        # security type is the final LOF-only guard against ETFs.
+        if item['报价有效'] or str(quote_values[61]).strip() == 'LOF':
+            result.append(item)
 
     # K-line calls are intentionally bounded; absent history keeps a fund in observation.
     candidates = sorted(
         (
             item for item in result
-            if item['报价有效'] and item['溢价率'] > 0 and item['交易路径已验证']
+            if item['报价有效'] and item['溢价率'] > 0
         ),
         key=lambda item: item['溢价率'],
         reverse=True,

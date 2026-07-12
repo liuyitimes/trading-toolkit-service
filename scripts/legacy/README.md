@@ -1,4 +1,4 @@
-# Legacy Patches
+# Legacy Scripts
 
-The scripts in `backend-patches/` are historical one-off migrations kept for traceability.
-They are not part of the normal development, test, or deployment workflow.
+Historical one-off patch scripts were removed after their changes were integrated.
+Use Git history to inspect the original migrations; normal development, testing, and deployment do not execute legacy patches.

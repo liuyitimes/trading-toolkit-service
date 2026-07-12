@@ -13,11 +13,11 @@ import json
 import logging
 import math
 import re
-from datetime import datetime
+import threading
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pandas as pd
-import requests
 
 from services.http_client import sina_get, em_get
 from utils.convert import safe_float
@@ -51,9 +51,13 @@ _STAGE_KEYWORDS = [
                 '公开发行可转换债券预案', '公司公开发行可转换公司债券预案']),
 ]
 
-# 进程内阶段日期缓存（按 stock_code 缓存，TTL = 1 天，避免每个用户重复拉公告）
-_STAGE_DATE_CACHE = {}
-_STAGE_DATE_TTL = 86400  # 24h
+_TIMELINE_STAGES = ('董事会预案', '股东大会批准', '交易所受理', '上市委通过', '同意注册')
+_TIMELINE_REFRESH_INTERVAL = timedelta(hours=24)
+_TIMELINE_REFRESH_LOCK = threading.Lock()
+_TIMELINE_REFRESHING = set()
+_MA20_CACHE_TTL = 86400
+_MA20_FAILURE_TTL = 300
+_MA20_REFRESHING = set()
 
 # A 股优先配售以股权登记日收市为界，登记日当天仍可参与。
 _CHINA_TZ = ZoneInfo('Asia/Shanghai')
@@ -260,16 +264,18 @@ def _derive_conversion_metrics(row, quote_price=0):
     if stock_price <= 0:
         stock_price = safe_float(quote_price)
 
-    conversion_value = safe_float(row.get('TRANSFER_VALUE', 0))
     conversion_price = safe_float(row.get('TRANSFER_PRICE', 0))
+    if conversion_price <= 0:
+        conversion_price = safe_float(row.get('INITIAL_TRANSFER_PRICE', 0))
 
-    # TRANSFER_PRICE is frequently blank for listed bonds. TRANSFER_VALUE follows
-    # conversion_value = stock_price / conversion_price * 100, so recover the
-    # current conversion price from the live underlying quote when possible.
-    if conversion_price <= 0 and stock_price > 0 and conversion_value > 0:
-        conversion_price = stock_price * 100 / conversion_value
-    if conversion_value <= 0 and stock_price > 0 and conversion_price > 0:
-        conversion_value = stock_price / conversion_price * 100
+    # RPT_BOND_CB_LIST currently duplicates the historical conversion price in
+    # TRANSFER_VALUE for many rows.  It is not a live conversion value.  Only
+    # combine a live underlying quote with a stated conversion price.
+    conversion_value = (
+        stock_price / conversion_price * 100
+        if stock_price > 0 and conversion_price > 0
+        else 0
+    )
 
     force_trigger_price = safe_float(row.get('REDEEM_TRIG_PRICE', 0))
     if force_trigger_price <= 0 and conversion_price > 0:
@@ -348,6 +354,7 @@ def _get_em_bonds():
         "source": "WEB",
         "client": "WEB",
         "pageSize": "500",
+        "pageNumber": "1",
         "sortColumns": "PUBLIC_START_DATE",
         "sortTypes": "-1",
     }
@@ -359,7 +366,18 @@ def _get_em_bonds():
         d = resp.json()
         if not (d.get("result") and d["result"].get("data")):
             return None
-        df = pd.DataFrame(d["result"]["data"])
+        result = d['result']
+        rows = list(result['data'])
+        total_pages = int(result.get('pages') or 1)
+        for page in range(2, total_pages + 1):
+            params['pageNumber'] = str(page)
+            page_response = em_get(_EM_BOND_LIST_URL, params=params, timeout=15)
+            page_data = page_response.json()
+            page_rows = (page_data.get('result') or {}).get('data') or []
+            if not page_rows:
+                break
+            rows.extend(page_rows)
+        df = pd.DataFrame(rows)
         return df if not df.empty else None
     except Exception as e:
         logger.warning(f'[EmBond] 获取东方财富可转债数据失败: {e}')
@@ -411,6 +429,14 @@ def _merge_bond_data():
     #   RATING→信用评级, ACTUAL_ISSUE_SCALE→发行规模, LISTING_DATE→上市时间
     em_df = _get_em_bonds()
     if em_df is not None and not em_df.empty:
+        # A delisted bond may remain in the EM history table and can still be
+        # returned by Sina's broad quote endpoint.  It must not reach a current
+        # opportunity list.
+        today = datetime.now(_CHINA_TZ).date()
+        if 'DELIST_DATE' in em_df.columns:
+            delist_days = pd.to_datetime(em_df['DELIST_DATE'], errors='coerce').dt.date
+            em_df = em_df[delist_days.isna() | (delist_days >= today)].copy()
+
         em_map = {}
         stock_codes = list({
             str(row.get('CONVERT_STOCK_CODE', ''))
@@ -839,14 +865,16 @@ def _fetch_em_pending_bonds():
     # 4. 批量获取 PB / 总股本（东财估值分析）
     stock_fundamentals = _fetch_stock_fundamentals(stock_codes)
 
-    # 5. 计算 MA20（东财K线）
-    ma20_map = {}
-    for code in stock_codes:
-        ma20 = _fetch_stock_ma20(code)
-        if ma20:
-            ma20_map[code] = ma20
+    # 5. 只读取日级 MA20 缓存。缓存未命中由列表响应后的后台任务补全，
+    # 避免上游 K 线重试阻塞配售列表首屏。
+    ma20_map = _load_cached_ma20(stock_codes)
 
-    # 6. 组装结果
+    # 6. 从持久化缓存读取历史审批节点。列表请求不再同步翻公告。
+    timeline_by_stock = _load_timeline_cache(
+        [str(b.get('CONVERT_STOCK_CODE', '')) for b in pending]
+    )
+
+    # 7. 组装结果
     result = []
     for bond in pending:
         stock_code = str(bond.get('CONVERT_STOCK_CODE', ''))
@@ -887,13 +915,10 @@ def _fetch_em_pending_bonds():
         if per_share_alloc > 0:
             shares_for_10_lots = round(1000 / per_share_alloc)
 
-        # 预估首日涨幅（固定 20%）
-        expected_profit = round(1000 * DEFAULT_PREMIUM_RATE, 2)
-
-        # 安全垫 = 预估收益 / 持仓成本 × 100%
-        safety_pad = 0
-        if shares_for_10_lots > 0 and stock_price > 0:
-            safety_pad = round(expected_profit / (shares_for_10_lots * stock_price) * 100, 2)
+        # 未上市债券没有可验证的首日收益。保留字段以兼容旧客户端，
+        # 但用 None 明确表示不可用，且不将其注入优配评分。
+        expected_profit = None
+        safety_pad = None
 
         # 正股偏离 MA20
         ma20_price = ma20_map.get(stock_code, 0)
@@ -901,11 +926,15 @@ def _fetch_em_pending_bonds():
         if ma20_price > 0 and stock_price > 0:
             stock_trend = round((stock_price - ma20_price) / ma20_price * 100, 2)
 
-        # 正股/转债比 = 总市值(亿) / 发行规模(亿)
+        # 正股/转债比 = 总市值(亿) / 发行规模(亿)，用于策略评分。
         stock_cash_ratio = 0
         if total_shares > 0 and stock_price > 0 and issue_size > 0:
             mkt_cap_yi = stock_price * total_shares / 1e8
             stock_cash_ratio = round(mkt_cap_yi / issue_size, 2)
+
+        # 百元含权 = 每股配售额 / 正股价格 * 100。
+        # 它与 stock_cash_ratio 的评分口径不同，单独提供给客户端展示。
+        cash_ratio = _calc_cash_ratio(per_share_alloc, stock_price)
 
         # 股权登记日价格（近似为当前价，盘中会动态变化）
         record_price = stock_price
@@ -919,9 +948,9 @@ def _fetch_em_pending_bonds():
         tradable_amount = issue_size
 
         # 配售三因子评分
-        strategy_score = _calc_placement_score(issue_size, tradable_amount, safety_pad)
-        strategy_rating = _get_rating_by_score(strategy_score)
-        risk_level = _get_risk_level(safety_pad)
+        strategy_score = None
+        strategy_rating = 'observation'
+        risk_level = 'unverified'
 
         result.append({
             'stock_code': stock_code,
@@ -930,7 +959,12 @@ def _fetch_em_pending_bonds():
             'bond_name': bond_name,
             'progress': status,
             'progress_dt': apply_date,
-            'progress_full': _build_progress_full(stock_code, status, apply_date, registration_date),
+            'progress_full': _build_progress_full(
+                timeline_by_stock.get(stock_code, {}).get('stage_dates', {}),
+                status,
+                apply_date,
+                registration_date,
+            ),
             'issue_size': issue_size,
             'rating': rating,
             'shareholder_ratio': 0,  # 待配售完成后由公告数据覆盖
@@ -948,6 +982,7 @@ def _fetch_em_pending_bonds():
             'apply_code': apply_code,
             'ration_code': '',
             'status': status,
+            'cash_ratio': cash_ratio,
             'stock_cash_ratio': stock_cash_ratio,
             'record_price': record_price,
             'ma20_price': ma20_price,
@@ -958,6 +993,9 @@ def _fetch_em_pending_bonds():
             'tradable_amount': round(tradable_amount, 2),
             'strategy_rating': strategy_rating,
             'risk_level': risk_level,
+            'strategy_status': 'observation',
+            'eligibility_verified': False,
+            'evidence_note': '需以发行公告核验优配资格、缴款截止和配售代码后方可执行。',
         })
 
     return result
@@ -971,9 +1009,8 @@ def _fetch_sina_stock_quotes(stock_codes):
     if not stock_codes:
         return {}
 
-    # 构造新浪 secid：SH → shCODE, SZ → szCODE
+    # 构造新浪 secid：SH → shCODE, SZ → szCODE。分批避免 URL 过长。
     symbols = []
-    code_to_stock = {}
     for code in stock_codes:
         code_str = str(code)
         if code_str.startswith(('6', '9')):
@@ -981,38 +1018,36 @@ def _fetch_sina_stock_quotes(stock_codes):
         else:
             sym = f'sz{code_str}'
         symbols.append(sym)
-        code_to_stock[code_str] = sym
-
-    url = _SINA_STOCK_QUOTE_URL + ','.join(symbols)
-    try:
-        resp = sina_get(url, timeout=10)
-        resp.encoding = 'gbk'
-        result = {}
-        for line in resp.text.strip().split('\n'):
-            if '="' not in line:
-                continue
-            # 解析 var hq_str_sh600389="江山股份,18.82,..."
-            var_part, data_part = line.split('="', 1)
-            sym = var_part.split('_')[-1]  # sh600389
-            stock_code = sym[2:]            # 600389
-            data = data_part.rstrip('";')
-            parts = data.split(',')
-            if len(parts) < 10:
-                continue
-            price = safe_float(parts[3])
-            prev_close = safe_float(parts[2])
-            change_pct = 0
-            if prev_close > 0 and price > 0:
-                change_pct = round((price - prev_close) / prev_close * 100, 2)
-            result[stock_code] = {
-                'price': price,
-                'change_pct': change_pct,
-                'name': parts[0],
-            }
-        return result
-    except Exception as e:
-        logger.warning(f'[SinaStock] 获取正股行情失败: {e}')
-        return {}
+    result = {}
+    for start in range(0, len(symbols), 100):
+        url = _SINA_STOCK_QUOTE_URL + ','.join(symbols[start:start + 100])
+        try:
+            resp = sina_get(url, timeout=10)
+            resp.encoding = 'gbk'
+            for line in resp.text.strip().split('\n'):
+                if '="' not in line:
+                    continue
+                # 解析 var hq_str_sh600389="江山股份,18.82,..."
+                var_part, data_part = line.split('="', 1)
+                sym = var_part.split('_')[-1]  # sh600389
+                stock_code = sym[2:]            # 600389
+                data = data_part.rstrip('";')
+                parts = data.split(',')
+                if len(parts) < 10:
+                    continue
+                price = safe_float(parts[3])
+                prev_close = safe_float(parts[2])
+                change_pct = 0
+                if prev_close > 0 and price > 0:
+                    change_pct = round((price - prev_close) / prev_close * 100, 2)
+                result[stock_code] = {
+                    'price': price,
+                    'change_pct': change_pct,
+                    'name': parts[0],
+                }
+        except Exception as e:
+            logger.warning(f'[SinaStock] 获取正股行情失败: {e}')
+    return result
 
 
 def _fetch_stock_fundamentals(stock_codes):
@@ -1097,18 +1132,185 @@ def _format_date(dt_val):
     return s.split(' ')[0] if ' ' in s else s
 
 
-def _build_progress_full(stock_code, status, apply_date, registration_date):
+def _load_timeline_cache(stock_codes):
+    """一次查询读取当前列表所需的历史时间轴节点。"""
+    codes = [str(code) for code in stock_codes if code]
+    if not codes:
+        return {}
+
+    try:
+        from models.convertible_timeline import ConvertibleTimeline
+        from models.database import get_db_session
+
+        with get_db_session() as db:
+            records = db.query(ConvertibleTimeline).filter(
+                ConvertibleTimeline.stock_code.in_(codes)
+            ).all()
+            result = {}
+            for record in records:
+                try:
+                    stage_dates = json.loads(record.stage_dates or '{}')
+                except (TypeError, json.JSONDecodeError):
+                    stage_dates = {}
+                result[record.stock_code] = {
+                    'stage_dates': {
+                        stage: date for stage, date in stage_dates.items()
+                        if stage in _TIMELINE_STAGES and _format_date(date)
+                    },
+                    'last_checked_at': record.last_checked_at,
+                }
+            return result
+    except Exception as e:
+        logger.warning(f'[Timeline] 读取缓存失败: {e}')
+        return {}
+
+
+def _timeline_needs_refresh(cached_timeline, now=None):
+    stage_dates = cached_timeline.get('stage_dates', {}) if cached_timeline else {}
+    if all(stage in stage_dates for stage in _TIMELINE_STAGES):
+        return False
+
+    last_checked_at = cached_timeline.get('last_checked_at') if cached_timeline else None
+    current = now or datetime.now()
+    return last_checked_at is None or current - last_checked_at >= _TIMELINE_REFRESH_INTERVAL
+
+
+def _ma20_cache_key(stock_code):
+    return f'convertible:ma20:{stock_code}'
+
+
+def _load_cached_ma20(stock_codes):
+    from services.cache import get_cache_manager
+
+    cache = get_cache_manager()
+    result = {}
+    for stock_code in stock_codes:
+        cached = cache.get(_ma20_cache_key(stock_code))
+        if cached is None:
+            continue
+        if isinstance(cached, dict):
+            result[stock_code] = safe_float(cached.get('value', 0))
+        else:
+            result[stock_code] = safe_float(cached)
+    return result
+
+
+def schedule_pending_enrichment(rows):
+    """在列表缓存写入后，串行补全 MA20 与缺失的历史时间轴节点。"""
+    from services.cache import get_cache_manager
+
+    stock_codes = [
+        str(row.get('stock_code') or row.get('CONVERT_STOCK_CODE') or '')
+        for row in rows
+    ]
+    timeline_by_stock = _load_timeline_cache(stock_codes)
+    timeline_candidates = []
+    ma20_candidates = []
+    cache = get_cache_manager()
+
+    for bond in rows:
+        stock_code = str(bond.get('stock_code') or bond.get('CONVERT_STOCK_CODE') or '')
+        if stock_code and _timeline_needs_refresh(timeline_by_stock.get(stock_code)):
+            bond_code = str(bond.get('bond_code') or bond.get('SECURITY_CODE') or '')
+            timeline_candidates.append((stock_code, bond_code))
+        if stock_code and cache.get(_ma20_cache_key(stock_code)) is None:
+            ma20_candidates.append(stock_code)
+
+    if not timeline_candidates and not ma20_candidates:
+        return
+
+    with _TIMELINE_REFRESH_LOCK:
+        timeline_candidates = [
+            item for item in timeline_candidates if item[0] not in _TIMELINE_REFRESHING
+        ]
+        ma20_candidates = [
+            stock_code for stock_code in ma20_candidates if stock_code not in _MA20_REFRESHING
+        ]
+        if not timeline_candidates and not ma20_candidates:
+            return
+        _TIMELINE_REFRESHING.update(stock_code for stock_code, _ in timeline_candidates)
+        _MA20_REFRESHING.update(ma20_candidates)
+
+    threading.Thread(
+        target=_pending_enrichment_worker,
+        args=(ma20_candidates, timeline_candidates),
+        name='convertible-pending-enrichment',
+        daemon=True,
+    ).start()
+
+
+def _pending_enrichment_worker(ma20_candidates, timeline_candidates):
+    from services.cache import get_cache_manager
+
+    refreshed = False
+    try:
+        cache = get_cache_manager()
+        for stock_code in ma20_candidates:
+            ma20 = _fetch_stock_ma20(stock_code)
+            cache.set(
+                _ma20_cache_key(stock_code),
+                {'value': ma20},
+                _MA20_CACHE_TTL if ma20 > 0 else _MA20_FAILURE_TTL,
+            )
+            refreshed = refreshed or ma20 > 0
+
+        for stock_code, bond_code in timeline_candidates:
+            try:
+                stage_dates = _fetch_stage_dates_from_notice(stock_code)
+                _save_timeline_cache(stock_code, bond_code, stage_dates)
+                refreshed = refreshed or bool(stage_dates)
+            except Exception as e:
+                logger.warning(f'[Timeline] {stock_code} 刷新失败: {e}')
+    finally:
+        with _TIMELINE_REFRESH_LOCK:
+            _MA20_REFRESHING.difference_update(ma20_candidates)
+            _TIMELINE_REFRESHING.difference_update(
+                stock_code for stock_code, _ in timeline_candidates
+            )
+
+    if refreshed:
+        cache.delete('convertible:pending:data')
+
+
+def _save_timeline_cache(stock_code, bond_code, stage_dates):
+    """按节点合并保存；同一节点保留最早公告日。"""
+    from models.convertible_timeline import ConvertibleTimeline
+    from models.database import get_db_session
+
+    normalized = {
+        stage: _format_date(date)
+        for stage, date in stage_dates.items()
+        if stage in _TIMELINE_STAGES and _format_date(date)
+    }
+    with get_db_session() as db:
+        record = db.query(ConvertibleTimeline).filter_by(stock_code=stock_code).first()
+        if record is None:
+            record = ConvertibleTimeline(stock_code=stock_code, bond_code=bond_code)
+            db.add(record)
+            current_dates = {}
+        else:
+            try:
+                current_dates = json.loads(record.stage_dates or '{}')
+            except (TypeError, json.JSONDecodeError):
+                current_dates = {}
+
+        for stage, date in normalized.items():
+            if stage not in current_dates or date < current_dates[stage]:
+                current_dates[stage] = date
+        record.bond_code = bond_code or record.bond_code
+        record.stage_dates = json.dumps(current_dates, ensure_ascii=False, sort_keys=True)
+        record.last_checked_at = datetime.now()
+
+
+def _build_progress_full(stage_dates, status, apply_date, registration_date):
     """组装 progress_full 字符串，供前端 parseProgressDates 解析
 
     格式：每行 `YYYY-MM-DD 阶段名`
     例：`2026-05-07 董事会预案;2026-05-09 股东大会批准;2026-06-17 同意注册;2026-07-13 股权登记日;2026-07-14 申购中`
     """
     parts = []
-    # 1) 从公告拉取前 5 阶段日期
-    stage_dates = _fetch_stage_dates_from_notice(stock_code)
-    # 按 ALL_STAGES 顺序输出
-    STAGE_ORDER = ['董事会预案', '股东大会批准', '交易所受理', '上市委通过', '同意注册']
-    for stage in STAGE_ORDER:
+    # 1) 读取已持久化的公告节点；缺失节点由后台刷新任务补全。
+    for stage in _TIMELINE_STAGES:
         d = stage_dates.get(stage)
         if d:
             parts.append(f'{d} {stage}')
@@ -1121,21 +1323,15 @@ def _build_progress_full(stock_code, status, apply_date, registration_date):
     return ';'.join(parts)
 
 
-def _fetch_stage_dates_from_notice(stock_code, max_pages=4, page_size=50):
+def _fetch_stage_dates_from_notice(stock_code, max_pages=2, page_size=100):
     """通过 EM 公告接口解析前 5 阶段日期（董事会预案→同意注册）
 
-    公告按时间倒序返回，从最近 100 条中匹配 5 个阶段对应的关键词。
+    公告按时间倒序返回，从最近 200 条中匹配 5 个阶段对应的关键词。
     匹配规则：每阶段只保留**最早**一条公告（因为预案可能会"二次修订"，
     但作为首次进入该阶段的标志，应取最早的公告日期）。
     """
-    import time as _time
     if not stock_code:
         return {}
-
-    cache_key = str(stock_code)
-    cached = _STAGE_DATE_CACHE.get(cache_key)
-    if cached and (_time.time() - cached[0]) < _STAGE_DATE_TTL:
-        return cached[1]
 
     stage_dates = {}
     for page in range(1, max_pages + 1):
@@ -1150,11 +1346,7 @@ def _fetch_stage_dates_from_notice(stock_code, max_pages=4, page_size=50):
             's_node': '0',
         }
         try:
-            # 显式绕过系统代理（如 127.0.0.1:7890），避免代理未启动时拉取失败
-            resp = requests.get(_EM_NOTICE_URL, params=params, timeout=10,
-                                headers={'User-Agent': 'Mozilla/5.0',
-                                         'Referer': 'https://data.eastmoney.com/'},
-                                proxies={'http': None, 'https': None})
+            resp = em_get(_EM_NOTICE_URL, params=params, timeout=10)
             if resp.status_code != 200:
                 break
             text = resp.text
@@ -1177,24 +1369,19 @@ def _fetch_stage_dates_from_notice(stock_code, max_pages=4, page_size=50):
                 if '可转债' not in title and '可转换公司债券' not in title and '转债' not in title:
                     continue
                 for stage, keywords in _STAGE_KEYWORDS:
-                    if stage in stage_dates:
-                        continue  # 已有该阶段日期（取最早）
                     for kw in keywords:
                         if kw in title:
-                            stage_dates[stage] = notice_date
+                            previous_date = stage_dates.get(stage)
+                            if not previous_date or notice_date < previous_date:
+                                stage_dates[stage] = notice_date
                             break
             # 5 个阶段都齐了就停
             if len(stage_dates) >= 5:
-                break
-            # 翻到早期公告（notice_date 越往前），如果当前页 notice_date
-            # 早于"董事会预案"日期，可以停
-            if '董事会预案' in stage_dates and items[-1].get('notice_date', '') < stage_dates['董事会预案']:
                 break
         except Exception as e:
             logger.warning(f'[StageDates] {stock_code} 第{page}页失败: {e}')
             break
 
-    _STAGE_DATE_CACHE[cache_key] = (_time.time(), stage_dates)
     return stage_dates
 
 
@@ -1228,6 +1415,15 @@ def _calc_strategy_score(stock_cash_ratio, safety_pad, issue_size):
     return round(cash_score + safety_score + size_score)
 
 
+def _calc_cash_ratio(per_share_allocation, stock_price):
+    """计算百元含权；输入无效时返回 0。"""
+    per_share = safe_float(per_share_allocation)
+    price = safe_float(stock_price)
+    if per_share <= 0 or price <= 0:
+        return 0
+    return round(per_share / price * 100, 2)
+
+
 def _calc_placement_score(issue_size, tradable_amount, safety_pad):
     """配售三因子评分 0-100
     tradable_amount: 首日可交易量（亿），= 发行规模 - 原股东配售部分
@@ -1247,11 +1443,10 @@ def _get_rating_by_score(score):
 
 
 def _get_risk_level(safety_pad):
+    if safety_pad is None:
+        return 'unverified'
     if safety_pad < 3:
         return 'high'
     elif safety_pad > 8:
         return 'low'
     return 'mid'
-
-
-DEFAULT_PREMIUM_RATE = 0.2

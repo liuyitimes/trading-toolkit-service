@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services.lof_fund import _parse_row, _resolve_execution_rule
+from services.lof_fund import _latest_trading_weekday, _parse_row, _resolve_execution_rule
 from services.normalizer import normalize_lof
 
 
@@ -99,23 +99,32 @@ class LofExecutionRuleTest(unittest.TestCase):
         self.assertFalse(resolved['trade_path_verified'])
         self.assertIsNone(resolved['expected_sell_date'])
 
-    def test_quote_requires_a_current_day_timestamp_and_positive_reference_value(self):
+    def test_weekend_uses_the_last_trading_weekday_for_quote_freshness(self):
+        now = datetime(2026, 7, 12, 10, 0, tzinfo=CST)
+        self.assertEqual(_latest_trading_weekday(now).isoformat(), '2026-07-10')
+
+    def test_quote_uses_tencent_price_and_unit_nav(self):
         now = datetime(2026, 7, 12, 10, 0, tzinfo=CST)
         row = {
             'f12': '161725',
             'f13': '0',
             'f14': '招商中证白酒',
-            'f2': 1.1,
-            'f3': 2.0,
-            'f5': 100,
-            'f6': 10000,
-            'f161': 1.0,
-            'f168': 10.0,
-            'f124': int(now.timestamp()),
         }
-        parsed = _parse_row(row, _resolve_execution_rule('161725', now), now)
+        quote = [''] * 82
+        quote[1] = '招商中证白酒'
+        quote[2] = '161725'
+        quote[3] = '1.1'
+        quote[30] = '20260710150000'
+        quote[32] = '2.0'
+        quote[36] = '100'
+        quote[37] = '10'
+        quote[61] = 'LOF'
+        quote[81] = '1.0'
+        parsed = _parse_row(row, quote, _resolve_execution_rule('161725', now), now)
         self.assertTrue(parsed['报价有效'])
-        self.assertEqual(parsed['净值日期'], '2026-07-12')
+        self.assertEqual(parsed['净值日期'], '2026-07-10')
+        self.assertEqual(parsed['溢价率'], 10.0)
+        self.assertEqual(parsed['成交额'], 100000)
 
     def test_normalizer_preserves_execution_evidence_fields(self):
         normalized = normalize_lof({

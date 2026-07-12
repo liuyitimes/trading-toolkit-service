@@ -436,10 +436,7 @@ class DirectSource(BaseDataSource):
     def get_market_sentiment(self) -> dict:
         """直连新浪指数 + 乐咕赚钱效应，计算市场情绪分数。
 
-        替代原 akshare_source 中的实现：
-        - ak.stock_zh_index_spot_sina() → sina_get 直连
-        - ak.stock_market_activity_legu() → legu_get 直连
-        - ak.stock_zh_index_daily() → 移除（JS 解密依赖），量能趋势改为缓存比较
+        数据由新浪指数行情与乐咕涨跌家数直连获取；量能趋势基于缓存比较。
         """
         result = {}
 
@@ -522,7 +519,7 @@ class DirectSource(BaseDataSource):
         # 保存今日成交额到缓存（供次日量能比较）
         _save_vol_history(result.get('sh_volume', 0), result.get('sz_volume', 0))
 
-        # 标准化返回（与原 akshare_source 保持字段一致）
+        # 标准化返回，保持 API 字段稳定。
         standard_keys = [
             'sentiment_score', 'vol_trend_score', 'prev_volume', 'volume_change_pct',
             'volume_5d_avg', 'volume_5d_change_pct',

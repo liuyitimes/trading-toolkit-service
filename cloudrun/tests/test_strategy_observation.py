@@ -6,16 +6,30 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from services.closed_end import _nav_is_current
-from services.hk_ipo import _classify_status
+from services.hk_ipo import _classify_status, _extract_offer_fields
 
 
 class IpoStatusTest(unittest.TestCase):
-    def test_only_the_application_day_is_open(self):
-        today = date(2026, 7, 12)
-        self.assertEqual(_classify_status('2026-07-12', '', today), 'open')
-        self.assertEqual(_classify_status('2026-07-13', '', today), 'upcoming')
-        self.assertEqual(_classify_status('2026-07-11', '2026-07-20', today), 'pending')
-        self.assertEqual(_classify_status('2026-07-11', '2026-07-10', today), 'listed')
+    def test_disclosure_state_never_implies_personal_eligibility(self):
+        self.assertEqual(
+            _classify_status({'offer_document_url': 'https://example.test/offer.pdf'}),
+            'account_review',
+        )
+        self.assertEqual(
+            _classify_status({'result_document_url': 'https://example.test/result.pdf'}),
+            'result_published',
+        )
+        self.assertEqual(_classify_status({}), 'observation')
+
+    def test_offer_parser_extracts_only_documented_public_fields(self):
+        fields = _extract_offer_fields(
+            'MaximumOfferPrice:HK$32.30 per Share. The Offer Price is currently '
+            'expected to be not less than HK$30.00. Your application must be for '
+            'a minimum of 100 Hong Kong Offer Shares.'
+        )
+        self.assertEqual(fields['price_low_hkd'], 30.0)
+        self.assertEqual(fields['price_high_hkd'], 32.3)
+        self.assertEqual(fields['board_lot_shares'], 100)
 
 
 class ClosedEndNavTest(unittest.TestCase):

@@ -1,8 +1,7 @@
 # PostgreSQL 本地安装脚本（需管理员权限运行）
 # 用法: 右键 PowerShell → 以管理员身份运行 → 执行此脚本
 #
-# ⚠️ 注意: 这是本地开发脚本，包含硬编码路径（如 .env 文件位置）。
-# 请根据实际开发环境修改下方路径后再执行。
+# ⚠️ 注意: 这是本地开发脚本，会在 cloudrun 目录创建 .env 文件。
 
 Write-Host "=== PostgreSQL 本地安装脚本 ===" -ForegroundColor Cyan
 
@@ -50,7 +49,7 @@ if ($pgBin) {
 
 # 5. 创建 .env 文件
 Write-Host "`n[4/4] 创建环境配置..." -ForegroundColor Yellow
-$envFile = "d:\Develop\WeChatProjects\trading-toolkit\cloudrun\.env"
+$envFile = Join-Path $PSScriptRoot ".env"
 if (-not (Test-Path $envFile)) {
     @"
 # 数据库配置
@@ -62,7 +61,6 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/trading_toolkit
 
 # 数据源配置
 USE_MOCK=false
-DATA_SOURCE=akshare
 "@ | Out-File -FilePath $envFile -Encoding UTF8
     Write-Host ".env 文件已创建" -ForegroundColor Green
 }

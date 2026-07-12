@@ -6,7 +6,7 @@
 
 ## 1. 项目概述
 
-Python 后端服务，基于 **Flask** 框架，提供可转债、LOF 基金、港股打新、封闭式基金等模块的数据 API。支持多数据源降级、分级缓存、接口限流、结构化日志。
+Python 后端服务，基于 **Flask** 框架，提供可转债、LOF 基金、港股打新、封闭式基金等模块的数据 API。通过直连公开 HTTP 上游、分级缓存、接口限流和结构化日志保障可用性。
 
 ### 技术栈
 
@@ -17,7 +17,7 @@ Python 后端服务，基于 **Flask** 框架，提供可转债、LOF 基金、�
 | 数据源 | 新浪财经、东方财富（直连 HTTP） |
 | 缓存 | fakeredis（本地）/ Redis（生产） |
 | 数据库 | SQLite（本地）/ MySQL（生产） |
-| 部署 | Docker + Google Cloud Run |
+| 部署 | Docker + 腾讯云 CloudBase 云托管 |
 
 ---
 
@@ -233,9 +233,9 @@ docker build -t trading-toolkit-service .
 docker run -p 8080:8080 trading-toolkit-service
 ```
 
-### 6.2 Google Cloud Run
+### 6.2 CloudBase 云托管
 
-项目使用 GitHub Actions 自动部署到 Cloud Run：
+项目使用 GitHub Actions 自动部署到 CloudBase 云托管：
 - CI：`.github/workflows/backend-ci.yml`
 - 部署：`.github/workflows/backend-deploy.yml`
 
@@ -253,7 +253,7 @@ docker run -p 8080:8080 trading-toolkit-service
 
 ```bash
 cd cloudrun
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 python app.py
 ```
 
@@ -276,9 +276,16 @@ curl http://localhost:8080/api/v1/convertible/pending
 curl http://localhost:8080/api/v1/convertible/list?page=1&page_size=3
 ```
 
+### 测试
+
+```bash
+cd ..
+python -m pytest cloudrun/tests backtest/tests
+```
+
 ### 常见问题
 
-- **ModuleNotFoundError**：执行 `pip install -r requirements.txt`
+- **ModuleNotFoundError**：执行 `pip install -r requirements-dev.txt`
 - **数据返回为空**：检查网络和上游公开接口；无可用缓存时接口会返回不可用状态
 - **缓存清理**：`curl -X POST http://localhost:8080/api/v1/admin/cache/clear -H "Content-Type: application/json" -d '{"module":"all"}'`
 # 本地开发指南

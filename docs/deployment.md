@@ -47,33 +47,6 @@ docker push ccr.ccs.tencentyun.com/<env-id>/trading-toolkit-service
 
 > ❗ 云托管需要按实例时长付费（最低约 30-100 元/月），当前阶段推荐先用本地 Flask 开发。
 
-## 用户数据存储
-
-### 当前方案（开发阶段）
-
-自选/申购状态存储在 `wx.getStorageSync`（小程序本地存储），跨设备不同步。
-
-### 未来方案（上线后）
-
-迁移到微信云数据库（MongoDB），天然支持 openid 鉴权：
-
-| 集合 | 说明 | 索引 |
-|------|------|------|
-| `user_favorites` | 用户自选 | openid + code + type |
-| `user_reminders` | 用户提醒 | openid + code + type + remind_type |
-| `user_settings` | 用户设置 | openid（唯一） |
-
-## 发布流程
-
-```
-1. 本地完成功能开发和测试
-2. 修改 config.js 改为 production 配置
-3. 确认云函数部署到对应环境
-4. 上传小程序代码
-5. 设置体验版 → 内部测试
-6. 提交审核 → 正式发布
-```
-
 ## 注意事项
 
 1. **依赖体积**：部署云函数时控制第三方依赖体积，并确保网络稳定

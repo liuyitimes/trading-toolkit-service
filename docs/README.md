@@ -9,6 +9,10 @@
 - [可转债抢权配售字段](domain/convertible-placement.md)：字段语义、计算口径与待完成的兼容修复。
 - [套利策略的可执行性校验](domain/arbitrage-strategy-validation.md)：可转债优配、封闭式基金折价与港股 IPO 的证据字段和失效条件。
 
+## 研究
+
+- [港股打新公开数据源验证](research/hk-ipo-data-sources.md)：HKEXnews 披露链、已验证请求和字段采集边界。
+
 ## 开发与交付
 
 - [本地开发](development.md)

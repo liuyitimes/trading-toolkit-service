@@ -51,4 +51,4 @@ Flask route
 | 港股 IPO | `/api/v1/hkipo/*` | 同花顺 |
 | 用户数据 | `/api/v1/user/favorites` | 本地数据库或 PostgreSQL |
 
-可转债配售字段与百元含权的计算口径见 [领域说明](domain/convertible-placement.md)。数据源、缓存和失败语义见 [数据源与缓存](architecture/data-sources.md)。
+可转债配售接口使用 `cash_ratio` 表示百元含权；`stock_cash_ratio` 是独立的策略评分指标。完整口径见 [领域说明](domain/convertible-placement.md)。数据源、缓存和失败语义见 [数据源与缓存](architecture/data-sources.md)。

@@ -109,6 +109,14 @@ jsl_session = _make_session(
     referer="https://www.jisilu.cn/",
 )
 
+tencent_session = _make_session(
+    referer="https://gu.qq.com/",
+)
+
+hkex_session = _make_session(
+    referer="https://www.hkexnews.hk/",
+)
+
 cninfo_session = _make_session(
     ua="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -212,6 +220,32 @@ def legu_get(url, params=None, headers=None, timeout=15, **kwargs):
         return resp
     except Exception as e:
         _log_request('legu', url, -1, start, str(e))
+        raise
+
+
+def tencent_get(url, params=None, headers=None, timeout=15, **kwargs):
+    """腾讯财经 HTTP GET，复用 tencent_session。"""
+    start = time.time()
+    try:
+        resp = tencent_session.get(url, params=params, headers=headers,
+                                   timeout=timeout, **kwargs)
+        _log_request('tencent', url, resp.status_code, start)
+        return resp
+    except Exception as e:
+        _log_request('tencent', url, -1, start, str(e))
+        raise
+
+
+def hkex_get(url, params=None, headers=None, timeout=15, **kwargs):
+    """HKEX / HKEXnews public disclosure GET."""
+    start = time.time()
+    try:
+        resp = hkex_session.get(url, params=params, headers=headers,
+                                timeout=timeout, **kwargs)
+        _log_request('hkex', url, resp.status_code, start)
+        return resp
+    except Exception as e:
+        _log_request('hkex', url, -1, start, str(e))
         raise
 
 

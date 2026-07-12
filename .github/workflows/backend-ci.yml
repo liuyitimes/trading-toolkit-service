@@ -21,7 +21,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install -r cloudrun/requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+          pip install -r cloudrun/requirements-dev.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
           pip install -e "backtest[dev]"
 
       - name: Run tests
@@ -31,4 +31,4 @@ jobs:
           cd cloudrun
           python scripts/test_api_logs.py
           cd ..
-          python -m pytest backtest/tests
+          python -m pytest cloudrun/tests backtest/tests

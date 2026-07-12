@@ -321,6 +321,8 @@ def convertible_pending():
         'convertible_pending', 'get_convertible_pending', force_refresh=force)
     if data is None:
         return api_response([], source='none', cached=False)
+    from services.convertible_bond import schedule_pending_enrichment
+    schedule_pending_enrichment(data)
     return api_response(data, source=source, cached=cached)
 
 
@@ -654,6 +656,7 @@ def compat_health():
 from models.database import init_db, get_db_session
 from models.user import UserFavorite, UserReminder, UserSetting
 from models.placement import PlacementResult
+from models.convertible_timeline import ConvertibleTimeline
 from services.auth import code_to_openid, require_auth
 
 # 初始化数据库
