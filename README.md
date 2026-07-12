@@ -9,9 +9,9 @@
 | 模块 | 功能 | 数据源 |
 |------|------|--------|
 | 可转债 | 实时行情、双低/强赎/折价/下修信号、市场温度、待发/配售 | 新浪财经 + 东方财富（直连 HTTP） |
-| LOF 基金 | 实时溢价排行、套利机会、申购状态 | akshare（东方财富） |
-| 港股打新 | IPO 列表、申购信息、上市表现 | akshare（同花顺） |
-| 市场概览 | 市场情绪、资金流向、板块热度 | akshare（新浪+乐咕） |
+| LOF 基金 | 实时溢价排行、套利机会、申购状态 | 东方财富公开接口 |
+| 港股打新 | IPO 列表、申购信息、上市表现 | 同花顺公开接口 |
+| 市场概览 | 市场情绪、资金流向、板块热度 | 新浪财经、乐咕、东方财富公开接口 |
 | 用户系统 | 自选管理、申购状态跟踪 | SQLite / PostgreSQL |
 
 ## 技术栈
@@ -19,7 +19,7 @@
 | 层 | 技术 |
 |----|------|
 | 后端 | Python Flask |
-| 数据源 | akshare（主），efinance / tushare / mock（降级） |
+| 数据源 | 直连公开 HTTP API（按上游域限流、重试和缓存） |
 | 缓存 | fakeredis（开发）/ Redis（生产）/ 内存 LRU |
 | 数据库 | SQLite（开发）/ PostgreSQL（生产） |
 | 部署 | Docker（云托管容器镜像） |
@@ -63,31 +63,21 @@ curl http://localhost:8080/api/v1/admin/health
 │   │   ├── convertible_bond.py   # 可转债数据合并
 │   │   ├── lof_fund.py           # LOF 数据
 │   │   ├── hk_ipo.py            # 港股 IPO 数据
-│   │   ├── akshare_source.py     # akshare 数据源
-│   │   ├── efinance_source.py    # efinance 备选源
-│   │   ├── tushare_source.py     # tushare 备选源
-│   │   ├── mock_source.py        # Mock 兜底
-│   │   ├── factory.py            # 工厂+熔断+降级
+│   │   ├── direct_source.py      # 直连数据源门面
+│   │   ├── http_client.py        # 上游 session、重试和限流
+│   │   ├── factory.py            # 单源工厂（兼容现有调用）
 │   │   ├── cache.py              # 分级缓存
 │   │   └── normalizer.py         # 字段标准化
 │   ├── models/              # 数据模型
 │   ├── utils/               # 工具
 │   └── Dockerfile           # 云托管容器镜像
 ├── backtest/                # 回测框架
-└── .trae/specs/             # 设计规格
-    ├── backend-api-design/
-    └── frontend-optimization/
+└── docs/                    # 架构、领域与交付文档
 ```
 
-## 数据降级策略
+## 数据可靠性
 
-数据源降级链：
-
-```
-akshare → efinance → tushare → mock
-```
-
-熔断器：连续失败 5 次 → 熔断 60 秒
+服务直接请求新浪财经、东方财富、同花顺和乐咕等公开接口。对单源端点，回源失败时优先返回带 `data_status: "stale"` 的上次成功缓存；无缓存时返回不可用状态，不以 Mock 数据伪装实时结果。详见 [数据源与缓存](docs/architecture/data-sources.md)。
 
 ## 接口清单
 
@@ -97,7 +87,7 @@ akshare → efinance → tushare → mock
 {
   "success": true,
   "data": { ... },
-  "meta": { "cached": true, "source": "akshare", "update_time": "..." }
+  "meta": { "cached": true, "source": "direct", "update_time": "..." }
 }
 ```
 
@@ -116,7 +106,7 @@ akshare → efinance → tushare → mock
 | `GET /api/v1/hkipo/upcoming` | 申购中 IPO |
 | `GET/POST/DELETE /api/v1/user/favorites` | 用户自选管理 |
 
-完整字段映射见 [DATA_GUIDE.md](DATA_GUIDE.md)
+完整字段映射见 [docs/DATA_GUIDE.md](docs/DATA_GUIDE.md)，文档索引见 [docs/README.md](docs/README.md)。
 
 ## 部署
 

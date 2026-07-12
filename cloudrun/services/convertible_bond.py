@@ -14,6 +14,7 @@ import logging
 import math
 import re
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
@@ -53,6 +54,9 @@ _STAGE_KEYWORDS = [
 # 进程内阶段日期缓存（按 stock_code 缓存，TTL = 1 天，避免每个用户重复拉公告）
 _STAGE_DATE_CACHE = {}
 _STAGE_DATE_TTL = 86400  # 24h
+
+# A 股优先配售以股权登记日收市为界，登记日当天仍可参与。
+_CHINA_TZ = ZoneInfo('Asia/Shanghai')
 
 # ==================== 工具函数 ====================
 
@@ -737,6 +741,25 @@ def get_pending_bonds():
     return []
 
 
+def _is_pending_placement_visible(registration_date, now=None):
+    """Return whether buying the stock can still qualify for priority placement.
+
+    Missing registration dates are retained because the upstream source has not
+    announced a definitive deadline yet. The stock remains eligible through
+    the close of its registration date.
+    """
+    if not registration_date:
+        return True
+
+    try:
+        record_date = datetime.strptime(str(registration_date)[:10], '%Y-%m-%d').date()
+    except (TypeError, ValueError):
+        return True
+
+    current = now or datetime.now(_CHINA_TZ)
+    return current.date() <= record_date
+
+
 def _enrich_with_local_placement(rows):
     """用本地公告数据库的配售结果覆盖预估数据
 
@@ -797,8 +820,13 @@ def _fetch_em_pending_bonds():
         logger.warning(f'[EmPending] 获取东财可转债数据失败: {e}')
         return []
 
-    # 2. 筛选未上市债券（LISTING_DATE 为空）
+    # 2. 筛选未上市且股权登记日尚未结束的债券。
     pending = [b for b in all_bonds if not b.get('LISTING_DATE')]
+    now = datetime.now(_CHINA_TZ)
+    pending = [
+        b for b in pending
+        if _is_pending_placement_visible(_format_date(b.get('SECURITY_START_DATE')), now)
+    ]
     if not pending:
         return []
 
@@ -819,7 +847,6 @@ def _fetch_em_pending_bonds():
             ma20_map[code] = ma20
 
     # 6. 组装结果
-    now = datetime.now()
     result = []
     for bond in pending:
         stock_code = str(bond.get('CONVERT_STOCK_CODE', ''))

@@ -31,7 +31,7 @@ cloudrun/
 ├── Dockerfile              — Docker 构建文件
 ├── services/               — 数据服务层
 │   ├── base.py             — 数据源基类
-│   ├── factory.py          — 数据源工厂（降级链管理）
+│   ├── factory.py          — 数据源工厂（DirectSource 调用门面）
 │   ├── cache.py            — 缓存管理器（TTL、SWR、预热）
 │   ├── http_client.py      — HTTP 客户端（sina_get、em_get、jsl_post）
 │   ├── convertible_bond.py — 可转债数据服务
@@ -259,7 +259,7 @@ python app.py
 
 启动后输出：
 ```
-后端启动完成，主数据源: akshare，缓存后端: fakeredis
+后端启动完成，主数据源: direct，缓存后端: fakeredis
  * Running on http://127.0.0.1:8080
 ```
 
@@ -279,7 +279,7 @@ curl http://localhost:8080/api/v1/convertible/list?page=1&page_size=3
 ### 常见问题
 
 - **ModuleNotFoundError**：执行 `pip install -r requirements.txt`
-- **数据返回为空**：检查网络，akshare 需访问外部 API；被限流时自动降级到 Mock
+- **数据返回为空**：检查网络和上游公开接口；无可用缓存时接口会返回不可用状态
 - **缓存清理**：`curl -X POST http://localhost:8080/api/v1/admin/cache/clear -H "Content-Type: application/json" -d '{"module":"all"}'`
 # 本地开发指南
 
@@ -299,10 +299,10 @@ pip install -r requirements.txt
 python app.py
 ```
 
-首次启动会自动安装 akshare 等依赖，初次运行因下载数据可能需要等待。启动后输出：
+首次启动会安装 Python 依赖，初次请求外部数据源可能需要等待。启动后输出：
 
 ```
-后端启动完成，主数据源: akshare，缓存后端: fakeredis
+后端启动完成，主数据源: direct，缓存后端: fakeredis
  * Running on http://127.0.0.1:8080
 ```
 
@@ -369,9 +369,9 @@ requests.post(f'{BASE}/api/v1/admin/cache/clear', json={'module': 'convertible'}
 pip install -r cloudrun/requirements.txt
 ```
 
-### akshare 数据返回为空
+### 公开数据源返回为空
 
-检查网络连接。akshare 需要访问新浪/东方财富的接口。如果被限流，系统会自动降级到 Mock 数据。
+检查网络连接和上游接口可用性。服务在有上次成功缓存时会返回 `data_status: "stale"`；无缓存时会返回不可用状态。
 
 ### 小程序请求报 `ERR_CERT_AUTHORITY_INVALID`
 
@@ -379,7 +379,7 @@ pip install -r cloudrun/requirements.txt
 
 ### 可转债溢价率字段为 0
 
-akshare 的东方财富接口 `bond_zh_cov()` 首次调用需要下载数据（约 10 秒），之后会缓存。如果仍有问题，重启后端并访问 `/api/v1/admin/cache/clear` 清除缓存后重试。
+东方财富接口首次请求可能较慢，之后会命中缓存。如果仍有问题，重启后端并访问 `/api/v1/admin/cache/clear` 清除缓存后重试。
 
 ### 缓存问题
 

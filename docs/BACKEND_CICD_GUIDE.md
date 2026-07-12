@@ -144,7 +144,6 @@ tcb env:list
 |--------|-----|------|
 | `DATABASE_URL` | `sqlite:///trading_toolkit.db` | 数据库（默认 SQLite，容器重启后数据丢失） |
 | `USE_MOCK` | `false` | 使用真实数据源 |
-| `TUSHARE_TOKEN` | （你的 token） | 可选，用于 tushare 数据源 |
 | `WX_APPID` | （你的 appid） | 可选，微信登录 |
 | `WX_SECRET` | （你的 secret） | 可选，微信登录 |
 
@@ -246,7 +245,7 @@ VITE_API_BASE_URL=https://<env-id>.service.tcloudbase.com/<service-id>
 
 ### Q2: CloudBase 部署超时
 
-**原因**：akshare/pandas 等依赖较大，构建时间较长
+**原因**：pandas 等 Python 依赖较大，构建时间较长
 
 **解决**：
 - CloudBase 默认构建超时 10 分钟，一般够用

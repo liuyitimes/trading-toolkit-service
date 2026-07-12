@@ -1,473 +1,54 @@
-﻿# Trading Toolkit 后端 - 数据说明文档
+# 后端数据说明
 
-## 一、整体架构
+状态：当前实现
 
-### 1.1 数据获取链路
+## 请求链路
 
-```
-HTTP 请求 (Flask 路由)
-    ↓
-services/factory.py (工厂 + 熔断 + 降级)
-    ↓
-数据源层（直连 HTTP）
-┌─────────────────────────────────────┐
-│  新浪财经 → 实时转债行情 + 正股行情   │
-│  东方财富 → 转股指标 + 待发债券 + PB/MA20 │
-│  mock (兜底) → 本地静态数据           │
-└─────────────────────────────────────┘
-    ↓
-services/normalizer.py (字段标准化)
-    ↓
-utils/response.py (统一响应格式)
+```text
+Flask route
+  -> DataSourceFactory / DirectSource
+  -> domain service
+  -> 新浪财经、东方财富、同花顺或乐咕公开接口
+  -> cache / unified response
 ```
 
-### 1.2 数据源降级链
+后端不再使用 akshare、efinance 或 tushare 作为运行时数据源。上游请求通过 `services/http_client.py` 管理会话、超时、重试和限流。
 
-```
-akshare → efinance → tushare → mock
-```
+## 响应格式
 
-熔断器：连续失败 5 次 → 熔断 60 秒
-
----
-
-## 二、首页数据说明
-
-### 2.1 数据接口
-
-- **接口**: `GET /api/v1/market/overview`
-- **返回字段**:
-  ```
-  convertible_bond  → 可转债市场温度
-  lof_fund          → LOF市场概览
-  hk_ipo            → 港股IPO概览
-  market_sentiment  → 市场情绪
-  fund_flow         → 资金流向
-  ```
-
-### 2.2 市场情绪指标
-
-| 指标 | 说明 | 来源 |
-|------|------|------|
-| 沪市情绪分 | 0-100分，越高越热 | akshare |
-| 深市情绪分 | 0-100分，越高越热 | akshare |
-| 情绪等级 | 过热/偏热/中性/偏冷/过冷 | 根据平均分计算 |
-
-**情绪等级计算公式**:
-```python
-avg_score = (sh_score + sz_score) / 2
-
-if avg_score >= 70:    过热
-elif avg_score >= 60:  偏热
-elif avg_score <= 30:  过冷
-elif avg_score <= 40:  偏冷
-else:                  中性
-```
-
-### 2.3 资金流向指标
-
-| 指标 | 说明 | 单位 | 来源 |
-|------|------|------|------|
-| 北向资金 | 北向资金净流入 | 亿元 | akshare |
-| 沪股通 | 沪股通净流入 | 亿元 | akshare |
-| 深股通 | 深股通净流入 | 亿元 | akshare |
-
-### 2.4 板块指标
-
-#### 可转债板块
-| 指标 | 说明 | 来源 |
-|------|------|------|
-| 转债数量 | 市场可转债总数 | 从可转债列表统计 |
-| 价格中位数 | 所有转债价格的中位数 | 从可转债列表计算 |
-| 溢价率中位数 | 所有转债转股溢价率的中位数 | 从可转债列表计算 |
-| 双低中位数 | 所有转债双低值的中位数 | 从可转债列表计算 |
-
-#### LOF板块
-| 指标 | 说明 | 来源 |
-|------|------|------|
-| 基金数量 | LOF基金总数 | 从LOF列表统计 |
-| 平均溢价率 | 所有LOF溢价率的算术平均值 | 从LOF列表计算 |
-| 最高溢价 | 最高溢价率数值 | 从LOF列表计算 |
-| 溢价基金数/占比 | 溢价率>0的基金数量及占比 | 从LOF列表统计 |
-| 暂停申购数 | 申购状态为"暂停"的基金数 | 从LOF列表统计 |
-
-#### 港股IPO板块
-| 指标 | 说明 | 来源 |
-|------|------|------|
-| 申购中数量 | 当前正在申购的新股数量 | 从IPO列表统计 |
-| 近期上市数 | 近期上市的新股数量 | 从IPO列表统计 |
-| 平均首日涨幅 | 已上市新股的平均涨跌幅 | 从IPO列表计算 |
-
-### 2.5 热门信号
-
-| 信号类型 | 筛选条件 | 展示数量 |
-|----------|----------|----------|
-| 折价套利 | 转股溢价率 < 0 | Top10 |
-| 双低策略 | 按双低值升序排列 | Top20 |
-| 强赎信号 | 转股溢价率<10% 且 价格105-140 | Top10 |
-| 下修博弈 | 转股溢价率>50% 且 价格<115 | Top10 |
-
----
-
-## 三、可转债数据说明
-
-### 3.1 数据接口
-
-| 接口 | 说明 |
-|------|------|
-| `GET /api/v1/convertible/list` | 完整可转债列表（支持筛选/排序/分页） |
-| `GET /api/v1/convertible/signals` | 可转债策略信号 |
-| `GET /api/v1/convertible/temperature` | 可转债市场温度 |
-| `GET /api/v1/convertible/detail/<code>` | 可转债详情 |
-
-### 3.2 数据来源
-
-**已上市可转债**：
-- 实时行情：新浪财经 `vip.stock.finance.sina.com.cn`（`_get_sina_bonds()`）
-- 转股指标：东方财富 `datacenter-web.eastmoney.com`（`_get_em_bonds()`，走 `em_get` 限流）
-
-**待发/配售可转债**：
-- 债券发行数据：东方财富 `RPT_BOND_CB_LIST`（`_fetch_em_pending_bonds()`）
-- 正股实时行情：新浪财经 `hq.sinajs.cn`（`_fetch_sina_stock_quotes()`）
-- PB / 总股本：东方财富 `RPT_VALUEANALYSIS_DET`（`_fetch_stock_fundamentals()`）
-- MA20 均线：东方财富 K线 `push2his.eastmoney.com`（`_fetch_stock_ma20()`）
-
-### 3.3 核心指标说明
-
-#### 转债价格（转债价格 / PRICE）
-- **定义**: 可转债的最新交易价格（元/张，面值100元）
-- **来源**: 交易所实时行情
-- **示例**: 129.93 表示每张129.93元
-
-#### 转股价值（转股价值 / CONVERSION_VALUE）
-- **定义**: 一张可转债按当前转股价转换成股票后的市值
-- **计算公式**:
-  ```
-  转股价值 = 100 / 转股价 × 正股价
-  ```
-- **说明**:
-  - 转股价值 > 100：说明转股后能获得超过面值的股票价值
-  - 转股价值 < 100：说明转股后股票价值低于面值
-
-#### 转股溢价率（转股溢价率 / PREMIUM_RATIO）
-- **定义**: 可转债价格相对于转股价值的溢价程度
-- **计算公式**:
-  ```
-  转股溢价率 = (转债价格 - 转股价值) / 转股价值 × 100%
-  ```
-- **解读**:
-  - **溢价率为正**：转债价格 > 转股价值，转债含有期权价值
-  - **溢价率为负（折价）**：转债价格 < 转股价值，存在套利空间
-  - **溢价率越低**：转债股性越强，跟随正股涨跌越紧密
-  - **溢价率越高**：转债债性越强，下跌保护越好
-
-#### 双低（双低 / DOUBLE_LOW）
-- **定义**: 可转债价格 + 转股溢价率，衡量转债的"便宜程度"
-- **计算公式**:
-  ```
-  双低值 = 转债价格 + 转股溢价率
-  ```
-- **说明**:
-  - 双低越低，转债越"便宜"，投资价值相对越高
-  - 经典双低策略：选择双低排名靠前的转债轮动
-- **参考阈值**:
-  - < 150: 偏低，可关注入场
-  - 150-180: 合理，可适当关注
-  - > 180: 偏高，需谨慎
-
-### 3.4 交易场所判断
-
-根据正股代码前缀判断：
-
-| 前缀 | 交易所 | 示例 |
-|------|--------|------|
-| 6, 5, 9, 11, 13 | 沪市 | 603270, 113706 |
-| 0, 1, 2, 3, 12 | 深市 | 002833, 127041 |
-| 4, 8 | 北市 | 400209 |
-
-### 3.5 信号筛选逻辑
-
-#### 双低策略 (double_low)
-```
-条件: 无特殊筛选条件
-排序: 按双低值升序
-数量: Top20
-```
-
-#### 强赎信号 (force_redeem)
-```
-条件: 转股溢价率 < 10%
-      AND 转债价格 >= 105
-      AND 转债价格 <= 140
-数量: Top10
-说明: 接近强赎触发线，关注转股套利机会
-```
-
-#### 折价套利 (discount)
-```
-条件: 转股溢价率 < 0
-数量: Top10
-说明: 转债价格低于转股价值，存在折价套利空间
-```
-
-#### 下修博弈 (down_revised)
-```
-条件: 转股溢价率 > 50%
-      AND 转债价格 < 115
-数量: Top10
-说明: 高溢价低价格，博弈下修转股价
-```
-
-### 3.6 市场温度计算
-
-市场温度基于全市场可转债数据计算：
-
-```python
-# 中位数计算
-price_median = all_bonds['转债价格'].median()
-premium_median = all_bonds['转股溢价率'].median()
-double_low_median = all_bonds['双低'].median()
-
-# 市场状态判断
-if double_low_median < 150:
-    market_status = '偏低，可关注'
-elif double_low_median < 180:
-    market_status = '合理，可适当关注'
-else:
-    market_status = '偏高，需谨慎'
-```
-
----
-
-## 四、LOF基金数据说明
-
-### 4.1 数据接口
-
-| 接口 | 说明 |
-|------|------|
-| `GET /api/v1/lof/list` | LOF 基金列表 |
-| `GET /api/v1/lof/opportunities` | LOF 套利机会（溢价/折价排行） |
-
-### 4.2 数据来源
-
-**akshare（东方财富）**:
-```python
-import akshare as ak
-df = ak.fund_lof_spot_em()  # 东方财富LOF实时行情
-```
-
-### 4.3 核心指标说明
-
-#### 最新价
-- **定义**: LOF基金在二级市场的最新交易价格
-- **说明**: 由市场买卖双方竞价决定，可实时变动
-
-#### 估值 / 基金净值
-- **定义**: 每份基金的实际价值（基金净值）
-- **说明**:
-  - 场外基金净值每个交易日收盘后公布一次
-  - 盘中的"估值"是根据持仓估算的实时净值
-
-#### 溢价率
-- **定义**: 二级市场价格相对于基金净值的溢价/折价程度
-- **计算公式**:
-  ```
-  溢价率 = (二级市场价格 - 基金净值) / 基金净值 × 100%
-  ```
-- **解读**:
-  - **正（溢价）**：市价 > 净值，二级市场买贵了
-  - **负（折价）**：市价 < 净值，二级市场买便宜了
-  - 溢价率绝对值越大，套利空间越大（需考虑交易成本）
-
-#### 连续溢价天数
-- **定义**: 连续保持溢价（溢价率>0）的交易日天数
-- **说明**: 连续溢价天数越长，说明该LOF持续受到市场追捧
-
-#### 申购状态
-- **定义**: 当前基金的申购限制状态
-- **常见值**:
-  - `不限`：申购无限制
-  - `暂停`：暂停申购（无法申购套利）
-  - `限100`：单日限购100元等
-
-> **注意**: 申购状态为"暂停"时，即使有高溢价也无法通过申购套利，需谨慎参与。
-
-### 4.4 套利机会排行
-
-#### 溢价排行 (premium)
-```
-排序: 按溢价率降序
-数量: Top20
-用途: 寻找高溢价套利机会（场内卖出 + 场外申购）
-```
-
-#### 折价排行 (discount)
-```
-排序: 按溢价率升序（折价最深排前）
-数量: Top20
-用途: 寻找折价套利机会（场内买入 + 场外赎回）
-```
-
-### 4.5 LOF市场概览计算
-
-```python
-premiums = [item['溢价率'] for item in lof_list]
-
-count = len(lof_list)                                    # 基金总数
-premium_avg = sum(premiums) / len(premiums)              # 平均溢价率
-top_premium = max(premiums)                              # 最高溢价
-positive_count = sum(1 for p in premiums if p > 0)       # 溢价基金数
-positive_rate = positive_count / len(premiums) * 100     # 溢价占比(%)
-paused_count = sum(1 for item in lof_list
-                   if item['申购状态'] == '暂停')        # 暂停申购数
-```
-
----
-
-## 五、港股IPO数据说明
-
-### 5.1 数据接口
-
-| 接口 | 说明 |
-|------|------|
-| `GET /api/v1/hkipo/list` | 全部港股IPO列表 |
-| `GET /api/v1/hkipo/upcoming` | 即将上市/申购中 |
-
-### 5.2 数据来源
-
-- **当前状态**: akshare 提供数据
-- **目标数据源**: 可接入同花顺、东方财富等港股IPO数据接口
-
-### 5.3 核心字段
-
-| 字段 | 说明 | 示例 |
-|------|------|------|
-| code | 股票代码 | 02593 |
-| name | 股票名称 | 映恩生物-B |
-| ipo_price | 发行价（港元） | 26.00 |
-| status | 状态 | 已上市 / 申购中 |
-| list_date | 上市日期 | 2026-06-20 |
-| lot_size | 每手股数 | 1000 |
-| change_pct | 首日涨跌幅（%） | 35.20 |
-
-### 5.4 状态说明
-
-- **申购中**: 正在公开招股，可以申请认购
-- **已上市**: 已挂牌交易，有首日涨跌幅数据
-
----
-
-## 六、Mock 数据说明
-
-### 6.1 Mock 数据位置
-
-| 层级 | 文件位置 |
-|------|----------|
-| 后端 | `cloudrun/mock_data.py` |
-| 数据源 | `cloudrun/services/mock_source.py` |
-
-### 6.2 Mock 数据用途
-
-1. **开发调试**: 无网络或无API权限时开发调试
-2. **演示展示**: 产品演示时保证有数据展示
-3. **异常回退**: 真实API故障时保证页面正常显示（降级链末端）
-
-### 6.3 切换到真实数据
-
-```bash
-# 部署时不设置 USE_MOCK 环境变量（默认false），即使用真实数据
-# 强制使用 Mock:
-USE_MOCK=true python app.py
-```
-
----
-
-## 七、API 接口清单
-
-所有接口统一前缀 `/api/v1/`，返回格式：
+业务接口使用统一包裹格式：
 
 ```json
 {
   "success": true,
-  "data": { ... },
-  "meta": { "cached": true, "source": "akshare", "update_time": "..." }
+  "data": {},
+  "meta": {
+    "cached": false,
+    "source": "direct",
+    "update_time": "2026-07-12T00:00:00Z"
+  }
 }
 ```
 
-### 7.1 路由列表
+对于使用陈旧缓存兜底的接口，响应还会包含 `data_status`：
 
-| 路由 | 说明 |
-|------|------|
-| `GET /api/v1/market/overview` | 综合市场概览 |
-| `GET /api/v1/market/sentiment` | 市场情绪 |
-| `GET /api/v1/market/fund-flow` | 资金流向 |
-| `GET /api/v1/convertible/list` | 可转债列表（支持筛选/排序/分页） |
-| `GET /api/v1/convertible/signals` | 可转债信号 |
-| `GET /api/v1/convertible/temperature` | 可转债市场温度 |
-| `GET /api/v1/convertible/detail/<code>` | 可转债详情 |
-| `GET /api/v1/lof/list` | LOF 基金列表 |
-| `GET /api/v1/lof/opportunities` | LOF 套利机会 |
-| `GET /api/v1/hkipo/list` | 港股 IPO 列表 |
-| `GET /api/v1/hkipo/upcoming` | 申购中 IPO |
-| `GET/POST/DELETE /api/v1/user/favorites` | 用户自选管理 |
-| `GET /api/v1/admin/health` | 健康检查 |
+| 值 | 含义 |
+| --- | --- |
+| `fresh` | 上游请求成功，或命中正在后台刷新的有效缓存 |
+| `stale` | 回源失败，返回上次成功缓存 |
+| `unavailable` | 回源失败且没有缓存 |
 
-### 7.2 缓存策略
+客户端必须把 `stale` 展示为数据延迟，不能将它标记为实时数据。
 
-| 接口类型 | 缓存时长 | 说明 |
-|----------|----------|------|
-| 行情列表 | 60 秒 | 可转债/LOF 列表 |
-| 套利信号 | 120 秒 | 策略信号 |
-| 市场概览 | 60 秒 | 首页综合数据 |
-| 详情 | 30 秒 | 单只可转债详情 |
+## 模块与字段
 
----
+| 模块 | 主要接口 | 主要上游 |
+| --- | --- | --- |
+| 市场概览 | `/api/v1/market/overview`、`/market/sentiment`、`/market/fund-flow` | 新浪财经、乐咕、东方财富 |
+| 可转债 | `/api/v1/convertible/*` | 新浪财经、东方财富 |
+| LOF | `/api/v1/lof/*` | 东方财富 |
+| 封闭式基金 | `/api/v1/closed-end/*` | 新浪财经、东方财富 |
+| 港股 IPO | `/api/v1/hkipo/*` | 同花顺 |
+| 用户数据 | `/api/v1/user/favorites` | 本地数据库或 PostgreSQL |
 
-## 八、风险提示
-
-> ⚠️ 本工具仅供学习研究，不构成投资建议。
->
-> - 所有数据仅供参考，请以官方渠道为准
-> - 套利策略存在交易成本、流动性等风险
-> - 历史表现不代表未来收益
-> - 投资有风险，入市需谨慎
-
-## 可转债配售数据字段说明
-
-### 后端字段（来自东方财富 API）
-
-| 字段名 | 来源字段 | 说明 | 计算方式 |
-|--------|---------|------|----------|
-| `shares_for_10_lots` | `FIRST_PER_PREPLACING` | 配10张债券所需股数 | `1000 / per_share_allocation` |
-| `per_share_allocation` | `FIRST_PER_PREPLACING` | 每股配售额（元） | 直接透传 |
-| `safety_pad` | - | 安全垫（%） | `expected_profit / (shares_for_10_lots * stock_price) * 100` |
-| `expected_profit` | - | 预估收益（元） | 固定 200 元（1000 * 0.2） |
-| `stock_cash_ratio` | - | 正股现金比例 | `总市值(亿) / 发行规模(亿)` |
-| `pb` | `PB_MRQ` | 市净率 | 东财 RPT_VALUEANALYSIS_DET |
-| `ma20_price` | K线 API | 20日均线 | 东财 push2his 最近20日收盘价均值 |
-
-### 前端额外计算字段
-
-以下字段由前端 Store（`convertible.js`）和小程序（`convertible/index.js`）独立计算：
-
-| 字段名 | 公式 | 说明 |
-|--------|------|------|
-| `perShare` | `per_share_allocation \|\| (1000 / shares_for_10_lots)` | 每股配售额，后端为0时fallback |
-| `sharesFor10` | `shares_for_10_lots` | 配10张需股数 |
-| `costFor10Lots` | `sharesFor10 * stockPrice` | 获配10张成本 |
-| `sharesPerLotRaw` | `sharesFor10` | 获配每手理论股数（1手=10张，配10张即1手） |
-| `actualSharesFor1Lot` | `Math.ceil(sharesPerLotRaw / 100) * 100` | 实际需购买股数（A股1手=100股整数约束） |
-| `costPerLot` | `actualSharesFor1Lot * stockPrice` | 获配每手成本 |
-| `oneHandMinShares` | `Math.ceil(sharesFor10 * 0.6 / 100) * 100`（仅沪市） | 沪市一手党最低需股数。理论最低50%（精确算法四舍五入），实操建议60%以提高成功率，向上取整到100股整数倍 |
-| `oneHandMinCost` | `oneHandMinShares * stockPrice` | 一手党最低成本 |
-
-### 数据来源
-
-- 上游：东方财富 `datacenter-web.eastmoney.com/api/data/v1/get`（`RPT_BOND_CB_LIST`）
-- 正股行情：新浪财经 `hq.sinajs.cn`（批量实时报价）
-- PB/总股本：东方财富 `RPT_VALUEANALYSIS_DET`
-- MA20：东方财富 `push2his.eastmoney.com`（日K线）
-- 后端抓取：`convertible_bond.py` → `_fetch_em_pending_bonds()`
-- 辅助函数：`_fetch_sina_stock_quotes()` / `_fetch_stock_fundamentals()` / `_fetch_stock_ma20()`
-- 缓存：30分钟 TTL（`cache.py`）
-- 注：东方财富仅覆盖已进入发行阶段的债券（已公告发行 → 上市），早期流程债券（董事会预案 → 上市委通过）暂不提供
+可转债配售字段与百元含权的计算口径见 [领域说明](domain/convertible-placement.md)。数据源、缓存和失败语义见 [数据源与缓存](architecture/data-sources.md)。

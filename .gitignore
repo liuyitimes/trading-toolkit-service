@@ -26,8 +26,7 @@ htmlcov/
 
 # Local tools
 .codegraph/
-.mimocode/*
-!.mimocode/plans/
+.mimocode/
 
 # Build outputs
 dist/
