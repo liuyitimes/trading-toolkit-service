@@ -23,6 +23,7 @@ from services.cache import (
     warmup_cache,
 )
 from services.lof_arbitrage import get_arbitrage_prediction as _get_lof_arbitrage_prediction
+from services.hk_ipo import refresh_hk_ipo_cache
 from utils.response import api_response, api_error, ErrorCode
 from utils.limiting import limit
 from utils.logging import setup_logging
@@ -206,10 +207,6 @@ def market_overview():
         # LOF 概览
         data, _, _ = fetch_with_cache('lof_summary', 'get_lof_summary')
         result['lof_fund'] = data or {}
-
-        # 港股 IPO 概览
-        data, _, _ = fetch_with_cache('hk_ipo_summary', 'get_hk_ipo_summary')
-        result['hk_ipo'] = data or {}
 
         # 市场情绪
         data, _, _ = fetch_with_cache('market_sentiment', 'get_market_sentiment')
@@ -433,6 +430,8 @@ def lof_arbitrage_predict(code):
 def hkipo_list():
     """港股 IPO 列表"""
     force = request.args.get('refresh', '').lower() == 'true'
+    if force:
+        refresh_hk_ipo_cache(force=True)
     data, source, cached = fetch_with_cache(
         'hk_ipo_list', 'get_hk_ipo_list', force_refresh=force)
     if data is None:
@@ -445,6 +444,8 @@ def hkipo_list():
 def hkipo_upcoming():
     """申购中/即将上市的港股 IPO"""
     force = request.args.get('refresh', '').lower() == 'true'
+    if force:
+        refresh_hk_ipo_cache(force=True)
     data, source, cached = fetch_with_cache(
         'hk_ipo_upcoming', 'get_hk_ipo_upcoming', force_refresh=force)
     if data is None:
@@ -457,6 +458,8 @@ def hkipo_upcoming():
 def hkipo_summary():
     """港股打新市场概览"""
     force = request.args.get('refresh', '').lower() == 'true'
+    if force:
+        refresh_hk_ipo_cache(force=True)
     data, source, cached = fetch_with_cache(
         'hk_ipo_summary', 'get_hk_ipo_summary', force_refresh=force)
     if data is None:
@@ -469,11 +472,22 @@ def hkipo_summary():
 def hkipo_detail(code):
     """港股 IPO 详情"""
     force = request.args.get('refresh', '').lower() == 'true'
+    if force:
+        refresh_hk_ipo_cache(force=True)
     data, source, cached = fetch_with_cache(
         'hk_ipo_detail', 'get_hk_ipo_detail', code=code, force_refresh=force)
     if data is None:
         return api_error('NOT_FOUND', '未找到该新股信息', 404)
     return api_response(data, source=source, cached=cached)
+
+
+@app.route('/api/v1/hkipo/sync', methods=['POST'])
+@limit(10)
+def hkipo_sync():
+    """Refresh the local IPO disclosure manifest and new PDFs."""
+    items = refresh_hk_ipo_cache(force=True)
+    cache.clear_pattern('hk:ipo:*')
+    return api_response({'total': len(items), 'synced': True}, source='local')
 
 
 # ==================== 封闭式基金 API ====================
@@ -902,7 +916,6 @@ def start_cache_warmup():
                 ('convertible_signals', lambda: factory.get_with_fallback('get_convertible_signals')[0]),
                 ('fund_flow', lambda: factory.get_with_fallback('get_fund_flow')[0]),
                 ('lof_summary', lambda: factory.get_with_fallback('get_lof_summary')[0]),
-                ('hk_ipo_summary', lambda: factory.get_with_fallback('get_hk_ipo_summary')[0]),
                 ('convertible_list', lambda: factory.get_with_fallback('get_convertible_list', page=1, page_size=50)[0]),
             ]
             warmup_cache(warmup_items)

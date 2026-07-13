@@ -8,13 +8,14 @@ checks, so every public-only record is an observation rather than a trade
 instruction.
 """
 
-import io
+import hashlib
 import json
 import logging
+import os
 import re
+import threading
 from datetime import date, datetime, timedelta, timezone
-
-import pdfplumber
+from pathlib import Path
 
 from services.http_client import hkex_get
 from utils.convert import safe_float
@@ -30,6 +31,9 @@ _ALLOTMENT_MARKER = 'allotment results'
 _SEARCH_TITLES = ('GLOBAL OFFERING', 'ALLOTMENT RESULTS')
 _DISCOVERY_WINDOW_DAYS = 30
 _MAX_PDF_PAGES = 8
+_SYNC_INTERVAL = timedelta(hours=6)
+_MANIFEST_NAME = 'manifest.json'
+_manifest_lock = threading.RLock()
 
 
 def _now():
@@ -185,21 +189,143 @@ def _merge_disclosures(records):
     return merged
 
 
-def _fetch_pdf_text(url):
-    if not url:
-        return ''
+def _cache_dir():
+    configured = os.environ.get('HK_IPO_CACHE_DIR', '').strip()
+    if configured:
+        return Path(configured)
+    return Path(__file__).resolve().parents[1] / 'data' / 'hk_ipo'
+
+
+def _manifest_path():
+    return _cache_dir() / _MANIFEST_NAME
+
+
+def _empty_manifest():
+    return {'version': 1, 'items': [], 'documents': {}}
+
+
+def _load_manifest():
+    path = _manifest_path()
     try:
-        response = hkex_get(url, timeout=30)
-        if response.status_code != 200:
-            return ''
-        with pdfplumber.open(io.BytesIO(response.content)) as pdf:
-            return '\n'.join(
+        with path.open('r', encoding='utf-8') as handle:
+            manifest = json.load(handle)
+        if isinstance(manifest, dict) and manifest.get('version') == 1:
+            manifest.setdefault('items', [])
+            manifest.setdefault('documents', {})
+            return manifest
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        pass
+    return None
+
+
+def _save_manifest(manifest):
+    path = _manifest_path()
+    with _manifest_lock:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f'{path.name}.tmp')
+        temporary.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding='utf-8',
+        )
+        temporary.replace(path)
+
+
+def _document_path(url):
+    digest = hashlib.sha256(url.encode('utf-8')).hexdigest()
+    return _cache_dir() / 'documents' / f'{digest}.pdf'
+
+
+def _parse_document_fields(content, document_type):
+    """Parse only a newly downloaded document; normal reads use saved fields."""
+    try:
+        import io
+        import pdfplumber
+
+        with pdfplumber.open(io.BytesIO(content)) as pdf:
+            text = '\n'.join(
                 page.extract_text() or ''
                 for page in pdf.pages[:_MAX_PDF_PAGES]
             )
+    except ImportError:
+        logger.warning('[HkIpo] pdfplumber is not installed; document saved without parsed fields')
+        return {}, 'parser_unavailable'
     except Exception as exc:
-        logger.warning('[HkIpo] HKEX PDF parse failed for %s: %s', url, exc)
-        return ''
+        logger.warning('[HkIpo] HKEX PDF parse failed: %s', exc)
+        return {}, 'parse_failed'
+
+    if document_type == 'offer':
+        return _extract_offer_fields(text), 'parsed'
+    return _extract_result_fields(text), 'parsed'
+
+
+def _sync_document(manifest, url, document_type):
+    if not url:
+        return
+
+    documents = manifest.setdefault('documents', {})
+    entry = documents.get(url) or {}
+    path = _document_path(url)
+    if entry.get('file_name') and path.is_file():
+        if entry.get('parse_status') != 'parsed':
+            fields, parse_status = _parse_document_fields(path.read_bytes(), document_type)
+            entry.update({'fields': fields, 'parse_status': parse_status})
+            documents[url] = entry
+        return
+
+    try:
+        response = hkex_get(url, timeout=30)
+        if response.status_code != 200:
+            raise RuntimeError(f'HTTP {response.status_code}')
+        content = response.content
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f'{path.name}.tmp')
+        temporary.write_bytes(content)
+        temporary.replace(path)
+        fields, parse_status = _parse_document_fields(content, document_type)
+        documents[url] = {
+            'file_name': path.name,
+            'downloaded_at': _now().isoformat(),
+            'document_type': document_type,
+            'parse_status': parse_status,
+            'fields': fields,
+        }
+    except Exception as exc:
+        logger.warning('[HkIpo] HKEX PDF download failed for %s: %s', url, exc)
+        documents[url] = {
+            **entry,
+            'last_attempt_at': _now().isoformat(),
+            'parse_status': entry.get('parse_status', 'unavailable'),
+            'fields': entry.get('fields', {}),
+        }
+
+
+def _is_sync_due(manifest, now=None):
+    synced_at = manifest.get('last_synced_at') if manifest else None
+    if not synced_at:
+        return True
+    try:
+        last_sync = datetime.fromisoformat(synced_at)
+        return (now or _now()) - last_sync >= _SYNC_INTERVAL
+    except (TypeError, ValueError):
+        return True
+
+
+def refresh_hk_ipo_cache(force=False, now=None):
+    """Refresh the disclosure list and download only new official PDF URLs."""
+    with _manifest_lock:
+        manifest = _load_manifest() or _empty_manifest()
+        if not force and not _is_sync_due(manifest, now):
+            return manifest['items']
+
+        items = _merge_disclosures(_fetch_disclosures(now))
+        for item in items:
+            _sync_document(manifest, item.get('offer_document_url'), 'offer')
+            _sync_document(manifest, item.get('result_document_url'), 'result')
+
+        manifest['items'] = items
+        manifest['last_synced_at'] = (now or _now()).isoformat()
+        _save_manifest(manifest)
+        return items
 
 
 def _first_number(text, pattern):
@@ -260,13 +386,18 @@ def _extract_result_fields(text):
 
 def _enrich_item_from_documents(item):
     enriched = dict(item)
-    offer_text = _fetch_pdf_text(item.get('offer_document_url'))
-    result_text = _fetch_pdf_text(item.get('result_document_url'))
-    if offer_text:
-        enriched.update(_extract_offer_fields(offer_text))
-    if result_text:
-        enriched.update(_extract_result_fields(result_text))
-    enriched['document_parse_status'] = 'parsed' if offer_text or result_text else 'unavailable'
+    manifest = _load_manifest() or _empty_manifest()
+    documents = manifest.get('documents', {})
+    statuses = []
+    for url in (item.get('offer_document_url'), item.get('result_document_url')):
+        if not url:
+            continue
+        entry = documents.get(url) or {}
+        enriched.update(entry.get('fields') or {})
+        statuses.append(entry.get('parse_status', 'not_cached'))
+    enriched['document_parse_status'] = (
+        'parsed' if 'parsed' in statuses else statuses[0] if statuses else 'not_requested'
+    )
     return enriched
 
 
@@ -280,12 +411,15 @@ def _classify_status(item, today=None):
 
 
 def get_hk_ipo_list():
-    """Return recent Hong Kong IPO disclosures from HKEXnews."""
-    return _merge_disclosures(_fetch_disclosures())
+    """Return the persisted Hong Kong IPO disclosure snapshot."""
+    manifest = _load_manifest()
+    if manifest is None:
+        return refresh_hk_ipo_cache(force=True)
+    return manifest.get('items', [])
 
 
 def get_hk_ipo_upcoming():
-    """Return only offering windows proved open by the official PDF.
+    """Return cached offering windows proved open by official PDF fields.
 
     Public data still cannot promote an item to executable: the caller must
     separately validate broker channel, deadline and account funds.
@@ -308,7 +442,7 @@ def get_hk_ipo_upcoming():
 
 
 def get_hk_ipo_detail(code):
-    """Return one IPO with official-PDF fields when available."""
+    """Return one IPO with locally cached official-PDF fields when available."""
     normalized = str(code or '').zfill(5)
     for item in get_hk_ipo_list():
         if item['code'] == normalized:
