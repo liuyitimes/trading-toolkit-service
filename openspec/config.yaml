@@ -1,0 +1,21 @@
+schema: spec-driven
+context: |
+  Trading Toolkit Service is a Flask financial-data and decision-support service.
+  This repository owns HTTP routes, normalized API envelopes, data collection, cache
+  behavior, persistence, and server-side calculations. Its OpenSpec baseline is
+  versioned with this repository. Web presentation and browser-local behavior are
+  owned by the independently versioned trading-toolkit-web repository.
+rules:
+  proposal:
+    - State affected service modules, public API, data-source, cache, and persistence impact.
+    - For a cross-repository change, identify the matching Web change by name and describe only this repository's responsibilities.
+    - Include a rollback plan for public API or business-rule changes.
+  specs:
+    - Use RFC 2119 language and Given/When/Then scenarios.
+    - Preserve the distinction between observation data and executable investment actions.
+    - Do not represent stale, unavailable, mock, or inferred data as real-time verified data.
+  design:
+    - Use the direct HTTP client and normalized API envelope.
+    - Do not introduce an unverified fallback data source.
+  tasks:
+    - Include focused service tests and API-contract verification when applicable.
