@@ -49,6 +49,8 @@ class PlacementObservation(Base):
     reconciliation_result = Column(String(30), nullable=False, default='accepted')
     calculation_version = Column(String(30), nullable=True)
     input_snapshot_id = Column(Integer, ForeignKey('placement_snapshot.id'), nullable=True)
+    override_actor = Column(String(100), nullable=True)
+    override_reason = Column(String(500), nullable=True)
 
 
 class PlacementSourceEvidence(Base):

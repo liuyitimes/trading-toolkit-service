@@ -696,7 +696,7 @@ init_db()
 
 # Prime the persisted placement snapshot after startup. This daemon job never delays
 # a request, and only one instance is active within the service process.
-from services.placement_snapshot import schedule_pending_snapshot_refresh
+from services.placement_snapshot import start_pending_snapshot_scheduler
 
 
 def _startup_pending_snapshot_fetch():
@@ -707,7 +707,7 @@ def _startup_pending_snapshot_fetch():
     return rows, source
 
 
-schedule_pending_snapshot_refresh(_startup_pending_snapshot_fetch)
+start_pending_snapshot_scheduler(_startup_pending_snapshot_fetch)
 
 
 @app.route('/api/v1/user/login', methods=['POST'])
