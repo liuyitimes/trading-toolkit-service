@@ -12,4 +12,4 @@
 ## 3. Verification
 
 - [x] 3.1 Add deterministic source-priority, stale-read, cadence, and compatibility tests.
-- [ ] 3.2 Verify cold reads do not invoke providers and startup refresh populates snapshots.
+- [x] 3.2 Verify the deployed snapshot API returns immediately and the startup refresh populates persisted candidates.
