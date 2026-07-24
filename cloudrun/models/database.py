@@ -54,5 +54,6 @@ def get_db():
 
 
 def init_db():
-    """初始化数据库（创建所有表）"""
-    Base.metadata.create_all(bind=engine)
+    """初始化本地 SQLite；生产数据库由 Alembic 迁移管理。"""
+    if DATABASE_URL.startswith('sqlite'):
+        Base.metadata.create_all(bind=engine)

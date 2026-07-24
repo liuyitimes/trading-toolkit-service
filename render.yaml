@@ -9,4 +9,12 @@ services:
         value: 3.11
       - key: PORT
         value: 8080
-    healthCheckPath: /api/v1/admin/health
+      - key: DATABASE_URL
+        sync: false
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: ENABLE_ADMIN_API
+        value: "false"
+      - key: SENTRY_DSN
+        sync: false
+    healthCheckPath: /healthz
