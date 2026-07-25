@@ -1,12 +1,12 @@
-# Tasks
+# 任务
 
-- [x] Verify the existing Eastmoney share-change report availability.
-- [x] Identify that the current fallback is mock data and unsuitable for overview metrics.
-- [x] Define data semantics and unavailable-state requirements.
-- [x] Separate account-equivalent and investor-equivalent estimates; prohibit false cross-fund deduplication.
-- [x] Research primary-source disclosure requirements and record the daily-data availability limitation.
-- [ ] Select a verified daily LOF net-share-change source or approve a maintained source feed.
-- [x] Define and validate the LOF market-direction taxonomy.
-- [x] Implement service aggregation with source and date metadata.
-- [x] Expose summary fields and unavailable-state metadata for the Web overview.
-- [x] Add backend tests and API-contract verification.
+- [x] 验证现有东方财富股份变动报告的可用性。
+- [x] 确认当前回退数据为模拟数据，不适用于总览指标。
+- [x] 定义数据语义和不可用状态要求。
+- [x] 区分账户等效估算和投资者等效估算；禁止跨基金的虚假去重。
+- [x] 调研一级数据源披露要求，并记录日频数据的可用性限制。
+- [ ] 选定已验证的 LOF 日频净份额变动数据源，或批准一个受维护的数据源。
+- [x] 定义并验证 LOF 市场方向分类体系。
+- [x] 实现带数据源和日期元数据的服务端聚合。
+- [x] 为 Web 总览暴露摘要字段和不可用状态元数据。
+- [x] 添加后端测试和 API 契约验证。

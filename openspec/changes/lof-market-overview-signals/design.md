@@ -1,8 +1,8 @@
-# Design
+# 设计
 
-## Data path
+## 数据路径
 
-The summary endpoint will need a verified daily share-change feed. For each eligible record:
+摘要接口需要一个已验证的日频份额变动数据源。对于每条符合条件的记录：
 
 ```text
 net_subscription_capital = max(net_share_change, 0) * NAV
@@ -10,19 +10,21 @@ account_count_lower_bound = ceil(net_subscription_capital / verified_per_account
 investor_limit_lower_bound = ceil(net_subscription_capital / verified_per_investor_limit)
 ```
 
-The implementation must retain share unit, share date, NAV date, source URL, retrieval time, limit value, limit subject (`account` or `investor`), applicable channels, applicable share class, and a record that non-subscription changes have been excluded. A positive net-share change is a lower-bound proxy for subscription activity, not gross subscriptions. Aggregation is permitted only across records with compatible units and the same latest completed trading date. Across multiple funds or dates it becomes `累计等效参与次数`; it must never be presented as deduplicated accounts, investors, or people.
+实现必须保留份额单位、份额日期、NAV（资产净值）日期、数据源 URL、获取时间、限额值、限额主体（`account` 或 `investor`）、适用渠道、适用份额类别，以及已排除非申购变动的记录。正向净份额变动是申购活动的下限代理值，而非申购总量。仅允许在单位兼容且最近已完成交易日相同的记录之间进行聚合。跨基金或跨日期时，它变为 `累计等效参与次数`；**绝不能**表示为去重后的账户数、投资者数或人数。
 
-## API contract
+## API 契约
 
-The LOF summary response will expose the following normalized fields for the Web overview:
+LOF 摘要响应将为 Web 总览暴露以下规范化字段：
 
-- `溢价热点方向`: highest weighted positive-premium taxonomy direction.
-- `昨日净申购资金（估）`: aggregate capital, with source date.
-- `昨日净申购账户数下限`: aggregate lower bound limited to funds with verified per-account caps.
-- `昨日净申购投资者限额下限`: separate lower bound, displayed only for explicit per-investor caps; it is not a unique-person count.
+- `溢价热点方向`：加权正溢价分类方向中的最高值。
+- `昨日净申购资金（估）`：汇总资金，含数据源日期。
+- `昨日净申购账户数下限`：仅限有已验证单账户限额的基金的汇总下限。
+- `昨日净申购投资者限额下限`：单独的下限，仅在有明确单投资者限额时显示；它并非唯一人数。
 
-Each field includes an explicit unavailable state and source date when the daily source is missing. The response never uses the existing `lof_arbitrage` mock-history fallback.
+每个字段都包含明确的不可用状态和数据源日期（在日频数据缺失时）。响应**绝不会**使用现有的 `lof_arbitrage` 模拟历史回退数据。
 
-## Pending product decision
+`hot_direction` 是可审查的证据组：`status` 为 `available` 时，响应必须同时包含 `name`、`method`、`weighted_premium`、`sample_count`、`constituents`、`unclassified_count`、`as_of`、`source` 和 `retrieved_at`。`constituents` 保留分类基金、分类依据及其纳入计算的溢价与成交额，供 Web 审查。`as_of` 来自纳入计算的有效行情日期；`source` 标识 LOF 主题分类表及其分类依据；`retrieved_at` 标识本次摘要生成时间。没有有效分类样本时，服务返回 `status: unavailable`、明确 `reason` 和未分类覆盖数，且不得返回命名方向。
 
-Before implementation, select a verified source for daily LOF net-share changes and confirm whether an explicitly maintained daily source file is acceptable when no public API is available. The account estimate also requires agreement that it represents a cap-based lower-bound estimate rather than a count of unique people.
+## 待决产品决策
+
+在实现之前，需选定已验证的 LOF 日频净份额变动数据源，并确认当无公开 API 可用时，明确受维护的日频数据源文件是否可接受。账户估算还需达成共识：它代表基于限额的下限估算，而非唯一人数统计。
