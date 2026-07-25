@@ -1,57 +1,57 @@
-# Market Data Reliability Specification
+# 行情数据可靠性规格
 
-## Purpose
+## 目的
 
-Define truthfulness, caching, source attribution, and failure behavior for external financial data.
+定义外部金融数据的真实性、缓存、来源归属和故障行为。
 
-## Requirements
+## 要求
 
-### Requirement: Explicit data freshness state
+### 要求：显式数据新鲜度状态
 
-Endpoints using stale-cache fallback SHALL distinguish `fresh`, `stale`, and `unavailable` data states.
+使用过期缓存回退的端点必须区分 `fresh`（新鲜）、`stale`（过期）和 `unavailable`（不可用）数据状态。
 
-#### Scenario: An upstream request fails with a cached value available
+#### 场景：上游请求失败但有可用缓存值
 
-- GIVEN a forced refresh cannot reach its upstream
-- WHEN a previous successful cache value exists
-- THEN the service returns that value with `data_status: "stale"`
-- AND the Web experience identifies it as delayed rather than real-time.
+- **假定**：强制刷新无法到达上游。
+- **当**：之前存在成功的缓存值时。
+- **则**：服务返回该值并附带 `data_status: "stale"`。
+- **并且**：Web 体验将其标识为延迟数据而非实时数据。
 
-#### Scenario: An upstream request fails without a cached value
+#### 场景：上游请求失败且无缓存值
 
-- GIVEN a request cannot reach its upstream
-- AND no prior successful cache value exists
-- WHEN the endpoint responds
-- THEN it returns an unavailable or structured source-error state
-- AND it does not manufacture a market value.
+- **假定**：请求无法到达上游。
+- **并且**：不存在之前成功的缓存值。
+- **当**：端点响应时。
+- **则**：返回不可用或结构化的来源错误状态。
+- **并且**：不虚构市场数据。
 
-### Requirement: Upstream access discipline
+### 要求：上游访问纪律
 
-All upstream HTTP calls SHALL use the provider-specific HTTP wrappers. Eastmoney access SHALL preserve serialized rate limiting, while Sina, Tonghuashun, and Legu calls SHALL use their respective wrappers.
+所有上游 HTTP 调用必须使用提供方专用的 HTTP 封装器。东财访问必须保持串行限流，而新浪、同花顺和乐股调用必须使用各自对应的封装器。
 
-#### Scenario: A provider client is extended
+#### 场景：扩展提供方客户端
 
-- GIVEN a new request to a known provider is required
-- WHEN it is added to a domain service
-- THEN it uses the matching wrapper rather than directly calling `requests`.
+- **假定**：需要向已知提供方发起新请求。
+- **当**：将其添加到领域服务时。
+- **则**：使用匹配的封装器而非直接调用 `requests`。
 
-### Requirement: Source and timestamp visibility
+### 要求：来源与时间戳可见性
 
-Data intended for user decision support SHALL retain source and update-time metadata through the service envelope. Web views SHOULD make stale or unavailable states observable at the point of use.
+用于用户决策支持的数据必须通过服务信封保留来源和更新时间元数据。Web 视图应在使用点使过期或不可用状态可观察。
 
-#### Scenario: A cached list is rendered
+#### 场景：渲染缓存列表
 
-- GIVEN a list endpoint returns source metadata
-- WHEN the Web view renders its result
-- THEN the data is not described as verified real-time data if metadata marks it stale.
+- **假定**：列表端点返回来源元数据。
+- **当**：Web 视图渲染其结果时。
+- **则**：如果元数据标记为过期，数据不得被描述为已验证的实时数据。
 
-### Requirement: No deceptive mock fallback
+### 要求：禁止欺骗性 Mock 回退
 
-Mock or inferred values SHALL be explicitly identified in development/testing and SHALL NOT be used to disguise unavailable market data in supported production behavior.
+Mock 或推断值必须在开发/测试中被明确标识，且不得用于在受支持的生产行为中伪装不可用的行情数据。
 
-#### Scenario: A provider has no response
+#### 场景：提供方无响应
 
-- GIVEN live retrieval fails
-- WHEN no valid stale value is available
-- THEN the endpoint reports the failure state
-- AND does not substitute randomized or unlabelled mock values.
+- **假定**：实时获取失败。
+- **当**：没有可用的有效过期值时。
+- **则**：端点报告故障状态。
+- **并且**：不替换为随机的或未标注的 Mock 值。

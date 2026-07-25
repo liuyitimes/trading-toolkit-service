@@ -1,68 +1,68 @@
-# LOF Funds Specification
+# LOF 基金规格
 
-## Purpose
+## 目的
 
-Define LOF listing, premium monitoring, opportunity analysis, and evidence boundaries.
+定义 LOF 上市、溢价监控、机会分析和证据边界。
 
-## Requirements
+## 要求
 
-### Requirement: LOF data service
+### 要求：LOF 数据服务
 
-The service SHALL provide list, opportunities, summary, share-history, and arbitrage-prediction endpoints for LOF funds.
+服务必须为 LOF 基金提供列表、机会、摘要、份额历史和套利预测端点。
 
-#### Scenario: A user opens the LOF page
+#### 场景：用户打开 LOF 页面
 
-- GIVEN the user navigates to `/lof`
-- WHEN the page loads
-- THEN it can retrieve current list and summary data from `/api/v1/lof/`
-- AND it can request instrument-specific share history and analysis when needed.
+- **假定**：用户导航到 `/lof`。
+- **当**：页面加载时。
+- **则**：可从 `/api/v1/lof/` 获取当前列表和摘要数据。
+- **并且**：需要时可请求特定标的的份额历史和分析。
 
-### Requirement: Premium data provenance
+### 要求：溢价数据溯源
 
-LOF premium and net-asset-value data SHALL use the normalized Eastmoney-backed implementation and retain status metadata. The service SHALL not represent zero-filled fallback fields as observed premium or NAV.
+LOF 溢价和净值数据必须使用基于东财的规范化实现，并保留状态元数据。服务不得将零值填充的回退字段表示为已观测的溢价或净值。
 
-#### Scenario: An upstream LOF field is missing
+#### 场景：上游 LOF 字段缺失
 
-- GIVEN the provider does not return a current valuation or premium field
-- WHEN the endpoint responds
-- THEN the field is unavailable or explicitly degraded
-- AND it is not silently converted to a valid zero value.
+- **假定**：提供方未返回当前估值或溢价字段。
+- **当**：端点响应时。
+- **则**：该字段不可用或明确降级。
+- **并且**：不会被静默转换为有效的零值。
 
-### Requirement: Opportunity qualification
+### 要求：机会准入条件
 
-An LOF item SHALL not be described as executable solely because a premium exists. Executability requires current subscription/redemption terms, timing, capacity, and traceable issuer or manager evidence.
+LOF 条目不得仅因存在溢价就被描述为可执行。可执行性需要当前申购/赎回条款、时机、容量以及可追溯的发行人或管理人证据。
 
-#### Scenario: A fund has a positive premium
+#### 场景：某基金存在正溢价
 
-- GIVEN a fund has a calculated market premium
-- WHEN the list ranks or labels the item
-- THEN it may be shown as an observation or analysis candidate
-- AND it is not asserted to be directly arbitrageable without verified operational conditions.
+- **假定**：某基金计算出市场溢价。
+- **当**：列表对该条目进行排序或标注时。
+- **则**：可作为观察或分析候选展示。
+- **并且**：不得在没有已验证操作条件的情况下声称可直接套利。
 
-### Requirement: Predictive analysis boundaries
+### 要求：预测分析边界
 
-Share-history and arbitrage-prediction outputs SHALL be identified as analysis rather than guaranteed outcome. Their sources, current-input time, and unavailable conditions SHALL remain observable.
+份额历史和套利预测输出必须标识为分析而非保证结果。其来源、当前输入时间和不可用条件必须保持可观察。
 
-#### Scenario: A prediction is requested without history
+#### 场景：在没有历史记录的情况下请求预测
 
-- GIVEN no usable share-history record exists for a fund
-- WHEN the history endpoint is called
-- THEN the service returns an appropriate not-found or unavailable response
-- AND the client does not render an invented trend.
+- **假定**：某基金没有可用的份额历史记录。
+- **当**：调用历史端点时。
+- **则**：服务返回适当的未找到或不可用响应。
+- **并且**：客户端不会渲染虚构的趋势。
 
-### Requirement: LOF desktop-table scanning and liquidity sorting
+### 要求：LOF 桌面表格扫描与流动性排序
 
-The LOF desktop tables SHALL use text-only metric headers and SHALL allow users to sort the `成交额` column by the normalized numeric `amountRaw` value in both the standard and arbitrage lists.
+LOF 桌面表格必须使用纯文本指标表头，并允许用户在标准和套利列表中按规范化的数值型 `amountRaw` 值对 `成交额` 列进行排序。
 
-#### Scenario: A user scans an LOF table header
+#### 场景：用户查看 LOF 表格表头
 
-- GIVEN the standard or arbitrage LOF desktop table is visible
-- WHEN the user views headers for 溢价率, 净溢价, 预期收益(万), and 成交额
-- THEN the headers contain their textual labels without formula information icons.
+- **假定**：标准或套利 LOF 桌面表格可见。
+- **当**：用户查看溢价率、净溢价、预期收益(万)和成交额的表头时。
+- **则**：表头仅包含文本标签，不含公式信息图标。
 
-#### Scenario: A user sorts by transaction amount
+#### 场景：用户按成交额排序
 
-- GIVEN an LOF desktop table contains funds with different `amountRaw` values
-- WHEN the user clicks the 成交额 header
-- THEN the table sorts the visible rows by `amountRaw`
-- AND repeated sorting can reverse the numeric order.
+- **假定**：某 LOF 桌面表格包含不同 `amountRaw` 值的基金。
+- **当**：用户点击成交额表头时。
+- **则**：表格按 `amountRaw` 对可见行进行排序。
+- **并且**：重复排序可以反转数值顺序。

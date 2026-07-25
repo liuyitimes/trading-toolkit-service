@@ -1,72 +1,72 @@
-# Operations and Delivery Specification
+# 运营与交付规格
 
-## Purpose
+## 目的
 
-Define reproducible local development, verification, configuration, and deployment expectations for supported modules.
+定义受支持模块的可复现本地开发、验证、配置和部署预期。
 
-## Requirements
+## 要求
 
-### Requirement: Local service development
+### 要求：本地服务开发
 
-The service SHALL be runnable from `trading-toolkit-service/cloudrun` with its declared Python dependencies and SHALL bind its local HTTP API to port 8080 unless configuration changes it.
+服务必须能够从 `trading-toolkit-service/cloudrun` 运行，使用其声明的 Python 依赖，并将其本地 HTTP API 绑定到 8080 端口，除非配置另行指定。
 
-#### Scenario: A developer starts the service locally
+#### 场景：开发人员在本地启动服务
 
-- GIVEN the service dependencies are installed
-- WHEN the developer runs the Flask application from `cloudrun`
-- THEN the API is reachable at the configured local address
-- AND `/api/v1/admin/health` can report service, cache, source, and database status.
+- **假定**：服务依赖已安装。
+- **当**：开发人员从 `cloudrun` 启动 Flask 应用时。
+- **则**：API 可通过配置的本地地址访问。
+- **并且**：`/api/v1/admin/health` 可报告服务、缓存、数据源和数据库状态。
 
-### Requirement: Local Web development
+### 要求：本地 Web 开发
 
-The Web application SHALL be runnable from `trading-toolkit-web` with declared Node dependencies, and its API base URL SHALL be configurable through build environment or local storage override.
+Web 应用必须能够从 `trading-toolkit-web` 运行，使用声明的 Node 依赖，且其 API 基础 URL 必须可通过构建环境或本地存储覆盖进行配置。
 
-#### Scenario: A developer points the Web app at a local service
+#### 场景：开发人员将 Web 应用指向本地服务
 
-- GIVEN the Flask service runs locally
-- WHEN the developer supplies the local API base URL
-- THEN the Web API client directs versioned requests to that service.
+- **假定**：Flask 服务在本地运行。
+- **当**：开发人员提供本地 API 基础 URL 时。
+- **则**：Web API 客户端将版本化请求定向到该服务。
 
-### Requirement: Environment configuration
+### 要求：环境配置
 
-The service SHALL document and honor `DATABASE_URL`, `REDIS_URL`, and `USE_MOCK` configuration. Mock mode SHALL be restricted to explicitly configured development or test use.
+服务必须记录并遵守 `DATABASE_URL`、`REDIS_URL` 和 `USE_MOCK` 配置。Mock 模式必须仅限于显式配置的开发或测试用途。
 
-#### Scenario: Production cache is configured
+#### 场景：配置了生产缓存
 
-- GIVEN `REDIS_URL` is configured in a deployment environment
-- WHEN the service initializes its cache manager
-- THEN it uses the configured Redis backend where reachable
-- AND public response semantics remain unchanged.
+- **假定**：部署环境中配置了 `REDIS_URL`。
+- **当**：服务初始化其缓存管理器时。
+- **则**：在可访问时使用配置的 Redis 后端。
+- **并且**：公共响应语义保持不变。
 
-### Requirement: Verification proportional to change
+### 要求：与变更规模匹配的验证
 
-Backend changes SHALL include focused tests for affected logic and API behavior. Web changes SHALL include a production build and appropriate browser verification. Backtest changes SHALL run relevant pytest coverage.
+后端变更必须包含针对受影响逻辑和 API 行为的聚焦测试。Web 变更必须包含生产构建和适当的浏览器验证。回测变更必须运行相关的 pytest 覆盖率。
 
-#### Scenario: A cross-project API change is completed
+#### 场景：跨项目 API 变更完成
 
-- GIVEN a change affects a Flask endpoint and its Web consumer
-- WHEN implementation is claimed complete
-- THEN verification includes backend tests or endpoint checks, Web build, and the affected browser workflow
-- AND the report separates these results from deployment availability.
+- **假定**：某项变更同时影响 Flask 端点及其 Web 消费端。
+- **当**：实现被声明为完成时。
+- **则**：验证包括后端测试或端点检查、Web 构建和受影响的浏览器工作流。
+- **并且**：报告将这些结果与部署可用性分开。
 
-### Requirement: Deployment boundaries
+### 要求：部署边界
 
-The service SHALL be deployable as the documented containerized CloudRun/CloudBase-compatible runtime, and the Web application SHALL be deployable as a static Vite build through its configured hosting workflow. Deployment configuration changes SHALL identify target environment, environment variables, and rollback procedure.
+服务必须可作为文档中记录的容器化 CloudRun/CloudBase 兼容运行时部署，Web 应用必须可通过其配置的托管工作流作为 Vite 静态构建部署。部署配置变更必须标识目标环境、环境变量和回滚流程。
 
-#### Scenario: A release changes an API base URL
+#### 场景：某次发布更改了 API 基础 URL
 
-- GIVEN a Web deployment needs a new service endpoint
-- WHEN release configuration changes
-- THEN the configured `VITE_API_BASE_URL` is verified against the deployed service
-- AND rollback restores the prior known-good base URL.
+- **假定**：Web 部署需要新的服务端点。
+- **当**：发布配置变更时。
+- **则**：配置的 `VITE_API_BASE_URL` 需与已部署的服务进行验证。
+- **并且**：回滚恢复先前已知可用的基础 URL。
 
-### Requirement: No mini-program delivery work
+### 要求：不包含小程序交付工作
 
-Operational plans, CI, test matrices, and release checklists SHALL exclude `trading-toolkit-mp` unless the user explicitly changes its maintenance status.
+运营计划、CI、测试矩阵和发布检查清单必须排除 `trading-toolkit-mp`，除非用户明确更改其维护状态。
 
-#### Scenario: A release checklist is prepared
+#### 场景：准备发布检查清单
 
-- GIVEN a supported release is planned
-- WHEN verification targets are listed
-- THEN they cover the Web application, service, and applicable backtest package
-- AND do not require mini-program build or deployment steps.
+- **假定**：规划了一次受支持的发布。
+- **当**：列出验证目标时。
+- **则**：覆盖 Web 应用、服务和适用的回测包。
+- **并且**：不需要小程序构建或部署步骤。

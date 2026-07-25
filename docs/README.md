@@ -2,6 +2,12 @@
 
 本目录只保存与当前代码或可追溯决策有关的工程文档；一次性的 IDE、AI 会话和验收清单不纳入版本库。
 
+## 工程治理
+
+- [问题跟踪规则](agents/issue-tracker.md)：本地问题、规格和路线图的存放方式。
+- [分诊标签](agents/triage-labels.md)：规范分诊角色与标签映射。
+- [领域文档规则](agents/domain.md)：领域资料的阅读顺序与维护约定。
+
 ## 当前架构
 
 - [数据源与缓存](architecture/data-sources.md)：上游、缓存状态和失败处理。

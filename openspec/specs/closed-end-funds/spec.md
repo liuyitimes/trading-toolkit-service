@@ -1,55 +1,55 @@
-# Closed-End Funds Specification
+# 封闭式基金规格
 
-## Purpose
+## 目的
 
-Define closed-end fund data display and prevent discount observations from being misrepresented as executable arbitrage.
+定义封闭式基金数据展示，并防止将折价观察错误表述为可执行套利。
 
-## Requirements
+## 要求
 
-### Requirement: Closed-end market monitoring
+### 要求：封闭式基金市场监控
 
-The service SHALL provide a list and summary under `/api/v1/closed-end/`, and the Web application SHALL expose the corresponding `/closed-end` workspace.
+服务必须在 `/api/v1/closed-end/` 下提供列表和汇总，Web 应用必须提供相应的 `/closed-end` 工作区。
 
-#### Scenario: A user visits the closed-end workspace
+#### 场景：用户访问封闭式基金工作区
 
-- GIVEN the user navigates to `/closed-end`
-- WHEN the page requests data
-- THEN it consumes the versioned closed-end list and summary APIs
-- AND renders normalized price, NAV, discount, and source-status information when available.
+- **假定**：用户导航到 `/closed-end`。
+- **当**：页面请求数据。
+- **则**：使用版本化的封闭式基金列表和汇总 API。
+- **并且**：在可用时渲染规范化价格、净值、折价和来源状态信息。
 
-### Requirement: Discount observation semantics
+### 要求：折价观察语义
 
-A discount between market price and disclosed NAV SHALL be displayed as an observation, not as an executable guaranteed return.
+市场价格与披露净值之间的折价必须展示为观察值，而不是可执行的保证收益。
 
-#### Scenario: Market price is below the last disclosed NAV
+#### 场景：市场价格低于最近披露净值
 
-- GIVEN a fund trades below its reported NAV
-- WHEN the UI calculates its discount
-- THEN it may show the discount percentage
-- AND it does not call the difference immediately redeemable profit.
+- **假定**：基金交易价格低于其报告净值。
+- **当**：UI 计算折价。
+- **则**：可以展示折价百分比。
+- **并且**：不得将该差额称为可立即赎回的利润。
 
-### Requirement: Exit-event evidence
+### 要求：退出事件证据
 
-Annualized discount return or executable-arbitrage labels SHALL require a current, fund-level convergence or exit event with traceable evidence, event date, and NAV date.
+年化折价收益或可执行套利标签必须要求当前的、基金层级的收敛或退出事件，并具有可追溯证据、事件日期和净值日期。
 
-#### Scenario: A fund lacks maturity or conversion evidence
+#### 场景：基金缺少到期或转换证据
 
-- GIVEN a fund has no verified maturity, liquidation, open-end conversion, tender, or comparable exit event
-- WHEN the system evaluates it
-- THEN it remains an observation
-- AND it does not calculate annualized discount return as an actionable result.
+- **假定**：基金没有经过核实的到期、清算、转为开放式、要约收购或可比退出事件。
+- **当**：系统评估该基金。
+- **则**：该基金仍是观察值。
+- **并且**：不得将年化折价收益计算为可操作结果。
 
-### Requirement: Temporal separation
+### 要求：时间维度分离
 
-The system SHALL preserve the difference between real-time exchange price and the date of the latest NAV disclosure.
+系统必须保留实时交易所价格与最近净值披露日期之间的差异。
 
-#### Scenario: Price and NAV dates differ
+#### 场景：价格与净值日期不同
 
-- GIVEN intraday price and NAV originate on different dates
-- WHEN the values are displayed
-- THEN each time reference remains distinguishable
-- AND the UI does not imply same-time comparability.
+- **假定**：盘中价格和净值来自不同日期。
+- **当**：展示这些值。
+- **则**：每个时间参考保持可区分。
+- **并且**：UI 不得暗示它们可在同一时点比较。
 
-## Known limitation
+## 已知限制
 
-The current client contains illustrative closed-end records and annualized-discount logic that depend on `maturity_date`; until fund-level exit evidence is available, this behavior is not an executable-strategy specification.
+当前客户端包含依赖 `maturity_date` 的示例封闭式基金记录和年化折价逻辑；在基金层级的退出证据可用前，此行为不构成可执行策略规格。

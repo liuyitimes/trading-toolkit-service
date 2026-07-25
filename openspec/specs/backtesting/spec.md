@@ -1,48 +1,48 @@
-# Backtesting Specification
+# 回测规格
 
-## Purpose
+## 目的
 
-Define the supported backtesting engine boundaries and market-rule simulation behavior.
+定义受支持的回测引擎边界和市场规则模拟行为。
 
-## Requirements
+## 要求
 
-### Requirement: Layered backtest responsibilities
+### 要求：分层回测职责
 
-The backtest package SHALL separate market data, trading session, strategy, broker validation, exchange matching, portfolio accounting, engine orchestration, and performance metrics.
+回测包必须分离市场数据、交易时段、策略、经纪校验、交易所撮合、组合核算、引擎编排和绩效指标。
 
-#### Scenario: A strategy places an order
+#### 场景：策略提交订单
 
-- GIVEN a strategy receives a market bar
-- WHEN it decides to trade
-- THEN it creates an `Order` through the strategy interface
-- AND it does not mutate cash or holdings directly.
+- **假定**：策略收到一个市场 bar。
+- **当**：它决定交易。
+- **则**：它通过策略接口创建 `Order`。
+- **并且**：不得直接修改现金或持仓。
 
-### Requirement: Trading session rules
+### 要求：交易时段规则
 
-The engine SHALL model the documented China-market trading periods, skip weekends, and apply opening and closing auction handling.
+引擎必须模拟已记录的中国市场交易时段、跳过周末，并处理开盘和收盘集合竞价。
 
-#### Scenario: A bar falls in the midday break
+#### 场景：bar 落在午间休市
 
-- GIVEN the timestamp is outside a supported trading phase
-- WHEN the engine processes data
-- THEN it does not treat the time as continuous trading.
+- **假定**：时间戳不在受支持的交易阶段内。
+- **当**：引擎处理数据。
+- **则**：不得将该时间视为连续竞价。
 
-### Requirement: Order and capital validation
+### 要求：订单与资金校验
 
-The broker SHALL enforce 100-share lot sizing, applicable price-limit bands, available funds including costs, and T+1 sell restrictions.
+经纪模块必须强制执行 100 股整手、适用涨跌停区间、包含成本的可用资金以及 T+1 卖出限制。
 
-#### Scenario: A same-day purchase is sold
+#### 场景：卖出当日买入的持仓
 
-- GIVEN a position was bought on the current trading day
-- WHEN a sell order is submitted before the next trading day
-- THEN broker validation rejects the sell under T+1 rules.
+- **假定**：某持仓在当前交易日买入。
+- **当**：下一交易日前提交卖单。
+- **则**：经纪校验按 T+1 规则拒绝该卖单。
 
-### Requirement: Testable market-data boundary
+### 要求：可测试的市场数据边界
 
-The backtest engine SHALL remain testable with mock market data and fixtures when optional external market-data dependencies are unavailable.
+当可选的外部市场数据依赖不可用时，回测引擎必须仍可通过模拟市场数据和夹具测试。
 
-#### Scenario: An environment lacks optional market-data dependencies
+#### 场景：环境缺少可选市场数据依赖
 
-- GIVEN the runtime cannot load the optional historical-data provider
-- WHEN unit tests execute with `MockMarketData`
-- THEN broker, exchange, portfolio, session, and strategy tests can still validate core rules.
+- **假定**：运行时无法加载可选的历史数据提供方。
+- **当**：单元测试使用 `MockMarketData` 执行。
+- **则**：经纪、交易所、组合、交易时段和策略测试仍可验证核心规则。

@@ -1,5 +1,30 @@
-## Specification Workflow
+## 智能体技能
 
-The repository-level `openspec/` directory is the source of truth for current supported Service behavior. Before changing Service behavior, read the relevant baseline specification and follow `openspec/README.md`.
+### 文档语言
 
-Service changes that also affect the Vue application SHALL have a same-named companion OpenSpec change in the independently versioned `trading-toolkit-web` repository. Keep HTTP contracts consistent, but record only Service implementation work here.
+本仓库产出的所有面向开发、产品、测试和交付的文档必须使用简体中文。SDD 开发流程产生的每份面向读者文件均属于交付文档，必须中文化；包括需求澄清、调研记录、提案、规格、设计、任务、测试计划、验收记录和交付报告，不得因其属于过程文件而保留英文说明。范围还包括 OpenSpec 的变更产物；`.scratch/` 中的问题、分诊记录和任务单；ADR、领域文档、实施计划以及 README 内容。修改既有交付文档时，应将本次涉及的面向读者内容同步改为简体中文。
+
+代码、API 名称、命令、文件路径、配置键和已约定的技术术语保留原文；英文技术术语首次出现时，如有助于理解，应附中文解释。提交信息和代码注释默认使用中文，除非既有文件的语言惯例或外部工具格式要求英文。
+
+软件设计说明（SDD）规格文档应在适用时说明：背景与目标、范围与非目标、术语、行为要求、验收标准，以及风险或待决问题。任务文档必须说明依赖关系和验证方式。
+### 规范工作流
+
+仓库根目录的 `openspec/` 是当前受支持后端行为的唯一事实来源。修改后端行为前，须阅读相关基线规范，并遵循 `openspec/README.md`。
+
+同时影响 Vue 应用的后端变更，必须在独立版本管理的 `trading-toolkit-web` 仓库中创建同名的配套 OpenSpec 变更。保持 HTTP 契约一致，但本仓库仅记录后端实现工作。
+
+### 问题跟踪
+
+问题和规格以本地 Markdown 文件形式存放在 `.scratch/`。详见 `docs/agents/issue-tracker.md`。使用 `.scratch/` 进行问题拆解和分诊，但不得将其作为 OpenSpec 基线或变更产物的替代品。
+
+### 分诊标签
+
+使用默认的规范分诊标签。详见 `docs/agents/triage-labels.md`。
+
+### 领域文档
+
+本仓库采用单上下文的领域文档布局。详见 `docs/agents/domain.md`。
+
+### 交付报告
+
+每项开发任务均须提供阶段进展和最终报告，说明已完成工作、结果与耗时。

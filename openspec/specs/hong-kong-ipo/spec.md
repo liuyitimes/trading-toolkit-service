@@ -1,62 +1,62 @@
-# Hong Kong IPO Specification
+# 香港 IPO 规格
 
-## Purpose
+## 目的
 
-Define Hong Kong IPO observation data, disclosure refresh, and the evidence required before an IPO can be presented as executable.
+定义香港 IPO 观测数据、披露刷新，以及将 IPO 标记为可执行前所需的证据。
 
-## Requirements
+## 要求
 
-### Requirement: IPO monitoring service
+### 要求：IPO 监控服务
 
-The service SHALL provide IPO list, upcoming, summary, detail, and disclosure-refresh endpoints under `/api/v1/hkipo/`.
+服务必须在 `/api/v1/hkipo/` 下提供 IPO 列表、即将上市、摘要、详情和披露刷新端点。
 
-#### Scenario: A user opens Hong Kong IPO monitoring
+#### 场景：用户打开香港 IPO 监控
 
-- GIVEN the user navigates to `/hkipo`
-- WHEN the page loads
-- THEN it requests normalized list and summary data
-- AND it can request instrument detail using its code.
+- **假定**：用户导航到 `/hkipo`。
+- **当**：页面加载时。
+- **则**：请求规范化的列表和摘要数据。
+- **并且**：可使用标的代码请求标的详情。
 
-### Requirement: Disclosure refresh boundary
+### 要求：披露刷新边界
 
-The IPO synchronization endpoint SHALL refresh the local disclosure manifest and invalidate relevant IPO cache entries; it SHALL not claim that every aggregate field is verified prospectus evidence.
+IPO 同步端点必须刷新本地披露清单并使相关 IPO 缓存条目失效；不得声称每个汇总字段都是已验证的招股书证据。
 
-#### Scenario: A refresh is requested
+#### 场景：请求刷新
 
-- GIVEN an authorized operational refresh is initiated
-- WHEN the refresh completes
-- THEN the response reports the number of synchronized items
-- AND stale IPO cache entries are cleared.
+- **假定**：发起了一次授权的运营刷新。
+- **当**：刷新完成时。
+- **则**：响应报告已同步的条目数量。
+- **并且**：过期的 IPO 缓存条目被清除。
 
-### Requirement: Executability evidence
+### 要求：可执行性证据
 
-An IPO SHALL be marked executable only with traceable prospectus or official offering information, applicable subscription dates and channel, price or range, board lot, funding conditions, and later allocation/trading evidence as the state advances.
+IPO 必须仅在具有可追溯的招股书或官方发行信息、适用的认购日期和渠道、价格或区间、每手股数、资金条件，以及随状态推进的后续配售/交易证据时，才可标记为可执行。
 
-#### Scenario: An IPO only has aggregate listing data
+#### 场景：IPO 仅有汇总上市数据
 
-- GIVEN an IPO record originates from an aggregate information table
-- WHEN it lacks official offering and account-channel facts
-- THEN it remains an observation
-- AND it is not ranked as a verified low-risk or expected-profit trade.
+- **假定**：某 IPO 记录来源于汇总信息表。
+- **当**：缺少官方发行和账户渠道事实时。
+- **则**：仍视为观察值。
+- **并且**：不得排名为已验证的低风险或预期盈利交易。
 
-### Requirement: Correct lot semantics
+### 要求：正确的手数语义
 
-The system SHALL not infer Hong Kong IPO board-lot cost from an aggregate subscription limit or A-share-style maximum subscription field.
+系统不得从汇总认购上限或 A 股式最大认购字段推断香港 IPO 每手成本。
 
-#### Scenario: An IPO contains `apply_limit`
+#### 场景：IPO 包含 `apply_limit`
 
-- GIVEN an aggregate provider supplies an application limit
-- WHEN a one-lot cost is needed
-- THEN the system requires verified board-lot share count and offering price
-- AND it does not multiply `apply_limit` by price as a substitute.
+- **假定**：汇总提供方提供了认购上限。
+- **当**：需要计算一手成本时。
+- **则**：系统要求已验证的每手股数和发行价。
+- **并且**：不得将 `apply_limit` 乘以价格作为替代方案。
 
-### Requirement: IPO state progression
+### 要求：IPO 状态递进
 
-The UI and domain model SHALL distinguish `观察`, `可执行`, `已提交/持有`, and `已确认退出条件`; each advance requires dated supporting evidence.
+UI 和领域模型必须区分 `观察`、`可执行`、`已提交/持有` 和 `已确认退出条件`；每次递进都需要有日期支持的证据。
 
-#### Scenario: Allocation results are pending
+#### 场景：配售结果待定
 
-- GIVEN a user submitted an application but allocation results are unavailable
-- WHEN the status is shown
-- THEN it remains submitted rather than allocated
-- AND the system does not present requested shares as tradable holdings.
+- **假定**：用户已提交申请但配售结果不可用。
+- **当**：显示状态时。
+- **则**：保持已提交而非已配售状态。
+- **并且**：系统不得将申请股数展示为可交易持仓。
