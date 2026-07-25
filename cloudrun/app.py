@@ -24,6 +24,7 @@ from services.cache import (
     warmup_cache,
 )
 from services.lof_arbitrage import get_arbitrage_prediction as _get_lof_arbitrage_prediction
+from services.lof_detail import get_lof_detail
 from services.hk_ipo import refresh_hk_ipo_cache
 from utils.response import api_response, api_error, ErrorCode
 from utils.limiting import limit
@@ -358,6 +359,20 @@ def lof_summary():
     if data is None:
         return api_error(*ErrorCode.DATA_SOURCE_ERROR)
     return api_response(data, source=source, cached=cached)
+
+
+@app.route('/api/v1/lof/<code>/detail')
+@limit(60)
+def lof_detail(code):
+    """LOF arbitrage-research detail with dated evidence metadata."""
+    try:
+        data = get_lof_detail(code)
+    except Exception as exc:
+        logger.error('LOF detail failed for %s: %s', code, exc)
+        return api_error(*ErrorCode.DATA_SOURCE_ERROR)
+    if data is None:
+        return api_error('NOT_FOUND', f'LOF {code} not found', 404)
+    return api_response(data, source='direct', cached=False)
 
 
 @app.route('/api/v1/lof/<code>/share-history')

@@ -1,89 +1,89 @@
-## Context
+## 背景
 
-LOF rows currently provide current price, latest unit NAV, premium, same-session turnover and volume, verified execution-rule evidence, and a bounded five-session turnover lookup. The existing detail is a 640px dialog in `Lof.vue`; it derives a fixed-cost net premium in the client and invokes `/arbitrage-predict`. That prediction can fall back to mock share history, while the in-progress `lof-market-overview-signals` change has established that this fallback is not decision-grade.
+LOF 行当前提供当前价格、最新单位 NAV、溢价、当期换手量和成交量、已验证的执行规则证据，以及有界的五个交易日换手量查询。现有详情是 `Lof.vue` 中的一个 640px 对话框；它在客户端推导固定成本净溢价并调用 `/arbitrage-predict`。该预测可以回退到模拟份额历史，而进行中的 `lof-market-overview-signals` 变更已确认此回退机制不满足决策级要求。
 
-The redesigned view must serve a researcher assessing an arbitrage candidate over the settlement period. It needs historical observations and provenance that are not available in the present list response.
+重新设计的视图必须服务于在结算期内评估套利候选的研究员。它需要当前列表响应中不可用的历史观测和溯源信息。
 
-## Goals / Non-Goals
+## 目标 / 非目标
 
-**Goals:**
+**目标：**
 
-- Provide one deep-linkable LOF detail workspace in the Web application.
-- Put decision-critical data in this order: premium, persistence, execution capacity, fund exposure, then volatility risk.
-- Persist and expose observed history with date and source metadata.
-- Preserve clear unavailable states rather than synthesize a complete-looking signal.
+- 在 Web 应用中提供一个可深度链接的 LOF 详情工作空间。
+- 按以下优先级排列决策关键数据：溢价、持续性、执行能力、基金敞口、波动率风险。
+- 持久化并暴露带日期和数据源元数据的历史观测。
+- 保留明确的不可用状态，而非合成看似完整的信号。
 
-**Non-Goals:**
+**非目标：**
 
-- Brokerage-account synchronization, order placement, or a claim about a user's actual holdings.
-- A combined buy/sell score or a guaranteed-return label.
-- Reusing `lof_arbitrage` mock history for any detail metric.
-- Changes to `trading-toolkit-mp`.
+- 券商账户同步、下单或声称用户实际持仓。
+- 综合买卖评分或保底收益标签。
+- 在任何详情指标中复用 `lof_arbitrage` 模拟历史。
+- 对 `trading-toolkit-mp` 的变更。
 
-## Decisions
+## 决策
 
-### Use a dedicated detail API
+### 使用专用详情 API
 
-The service will provide `GET /api/v1/lof/:code/detail` for the Web detail route. It separates history and holdings from list responses, so list refreshes stay bounded and the detail response retains independent freshness and provenance.
+服务将为 Web 详情路由提供 `GET /api/v1/lof/:code/detail`。它将历史和持仓与列表响应分离，使列表刷新保持轻量，详情响应保持独立的时效性和溯源性。
 
-The detail API will return one normalized envelope with these groups:
+详情 API 将返回一个包含以下分组的规范化响应信封：
 
-| Group        | Required content                                                                  |
+| 分组 | 必要内容 |
 | ------------ | --------------------------------------------------------------------------------- |
-| `instrument` | code, name, exchange, quote time, NAV date, validity state                        |
-| `execution`  | subscription/custody/sale-path evidence, cap, and evidence freshness              |
-| `premium`    | current gross premium, cost-assumption net premium, and observed history summary  |
-| `liquidity`  | current turnover/volume plus dated rolling turnover observations                  |
-| `holdings`   | dated fund portfolio holdings and concentration, or an explicit unavailable state |
-| `volatility` | dated price, NAV, and premium variation measures with their windows               |
-| `provenance` | source URL or identifier, observed-at, retrieved-at, and freshness for each group |
+| `instrument` | 代码、名称、交易所、报价时间、NAV 日期、有效性状态 |
+| `execution` | 申购/托管/赎回路径证据、限额，以及证据时效性 |
+| `premium` | 当前总溢价、成本假设净溢价，以及历史观测摘要 |
+| `liquidity` | 当前换手量/成交量以及带日期的滚动换手量观测 |
+| `holdings` | 带日期的基金投资组合持仓和集中度，或明确的不可用状态 |
+| `volatility` | 带日期的价格、NAV 和溢价变动度量及其窗口 |
+| `provenance` | 每个分组的数据源 URL 或标识符、观测时间、获取时间和时效性 |
 
-The alternative of extending `/lof/list` is rejected because histories and holdings would make every list request expensive and blur list-vs-detail freshness.
+拒绝采用扩展 `/lof/list` 的方案，因为历史数据和持仓会使每次列表请求变得昂贵，且模糊了列表与详情之间的时效性差异。
 
-### Return decision-oriented response groups
+### 返回面向决策的响应分组
 
-The detail response groups evidence in this order: instrument identity and freshness, execution-path state, premium persistence, liquidity, fund exposure, settlement-window risk, and provenance. Each group carries its own availability and freshness fields so the Web client can render unavailable data without manufacturing a fallback.
+详情响应按以下顺序组织证据：标的标识与时效性、执行路径状态、溢价持续性、流动性、基金敞口、结算窗口风险和溯源信息。每个分组自带可用性和时效性字段，使 Web 客户端可以在不制造回退值的情况下渲染不可用数据。
 
-### Persist observed data server-side
+### 服务端持久化观测数据
 
-The service will write timestamped observations after a valid LOF quote is fetched. A detail request reads this store for premium persistence and liquidity history; it does not manufacture missing periods. Portfolio holdings are stored separately with the manager or official-disclosure date and source identifier.
+服务将在获取到有效 LOF 报价后写入带时间戳的观测数据。详情请求读取该存储以获取溢价持续性和流动性历史；它不会制造缺失时段的数据。投资组合持仓单独存储，附带管理人或官方披露日期及数据源标识。
 
-Client-side history accumulation is rejected because it loses continuity on refresh, cannot support provenance, and is unavailable to a first-time viewer. An unverified public-source fallback is rejected by the repository data-reliability rules.
+拒绝客户端历史累积方案，因为它在刷新时丢失连续性、无法支持溯源，且对首次访问者不可用。根据仓库数据可靠性规则，拒绝使用未经验证的公开数据源回退。
 
-### Separate holdings from shares and modeled capital flows
+### 将持仓与份额和模拟资金流分开
 
-`holdings` means the fund's disclosed investment portfolio, not user holdings and not total LOF units. Total units or net subscription changes, if later available from a verified source, belong in a separately named fund-share-supply analysis group. The existing prediction endpoint remains analysis-only; mock-source responses are not consumed by the redesigned detail view.
+`holdings` 指基金已披露的投资组合，而非用户持仓，也非 LOF 总份额。总份额或净申购变动（如果后续可从已验证数据源获取）应归入单独命名的基金份额供给分析分组。现有预测端点仍仅用于分析；重新设计的详情视图不消费模拟数据源的响应。
 
-### Risk measures remain decomposed
+### 风险度量保持分组件展示
 
-The first implementation will show components rather than a black-box composite score:
+首次实现将展示各组件而非黑箱综合评分：
 
-- premium persistence: positive-session count, min/max/range, and current deviation from observed range;
-- liquidity: current turnover/volume and rolling turnover comparison;
-- market/NAV risk: price return range, premium range, and NAV change over stated windows;
-- exposure risk: disclosure-date concentration and top holdings.
+- 溢价持续性：正溢价交易日计数、最小/最大/区间，以及当前偏离观测区间的程度；
+- 流动性：当前换手量/成交量和滚动换手量对比；
+- 市场/NAV 风险：在指定窗口内的价格回报区间、溢价区间和 NAV 变动；
+- 敞口风险：披露日期集中度和前十大持仓。
 
-This is preferred over a single score because each input has different freshness and evidence quality.
+这种方式优于单一评分，因为每个输入的时效性和证据质量各不相同。
 
-## Risks / Trade-offs
+## 风险 / 权衡
 
-- [A verified holdings source may be quarterly and stale] -> show the disclosure date prominently and mark it unavailable when no source exists; never imply intraday holdings.
-- [Observed history begins only after deployment] -> render an insufficient-history state until documented windows are complete.
-- [The current list has a fixed client-side fee assumption] -> label it as an editable/documented assumption; do not represent it as an account-specific cost.
-- [A detail endpoint adds calls and storage] -> defer history and holdings fetches until a user opens the route, cache by source freshness, and keep the list endpoint lightweight.
-- [The active market-overview change is incomplete] -> keep its net-subscription fields out of this detail contract until its verified source decision is complete.
+- [已验证的持仓数据源可能是季度披露且过时] -> 突出显示披露日期，并在无数据源时标记为不可用；绝不要暗示日内持仓。
+- [历史观测仅从部署后开始] -> 在有据可查的窗口完成之前，渲染历史数据不足状态。
+- [当前列表有固定的客户端费率假设] -> 将其标记为可编辑/有据可查的假设；不将其表示为账户特定成本。
+- [详情端点增加调用和存储] -> 延迟历史和持仓获取，直到用户打开路由；按数据源时效性缓存；保持列表端点轻量。
+- [进行中的市场总览变更为完成] -> 在其已验证数据源决策完成之前，将其净申购字段排除在本详情契约之外。
 
-## Migration Plan
+## 迁移计划
 
-1. Add the detail contract and storage without changing list semantics.
-2. Backfill only verified observations and disclosures; show unavailable states for all other instruments.
-3. Add the `/lof/:code` route and migrate list-row navigation from the dialog.
-4. Remove the old dialog after parity testing and preserve the list route as the rollback path.
-5. Roll back by disabling detail navigation and returning users to the existing list; retain stored observations for later recovery.
+1. 添加详情契约和存储，不改变列表语义。
+2. 仅回填已验证的观测和披露；对所有其他标的显示不可用状态。
+3. 添加 `/lof/:code` 路由，将列表行导航从对话框迁移过来。
+4. 在同等测试后移除旧对话框，保留列表路由作为回滚路径。
+5. 回滚时禁用详情导航，将用户返回现有列表；保留已存储的观测数据以便后续恢复。
 
-## Open Questions
+## 待决问题
 
-1. Does “持仓” mean fund portfolio exposure, the user's own position, or both? This design assumes fund portfolio exposure because no brokerage-position source exists.
-2. Which official or manager source will provide dated portfolio holdings, and what maximum disclosure age is acceptable?
-3. Which observed windows are required for premium persistence and volatility: 5/20 sessions, calendar days, or both?
-4. Should the net-premium assumption be user-configurable, and which subscription/commission schedule is authoritative for the first release?
+1. "持仓"是指基金投资组合敞口、用户自身仓位，还是两者兼有？本设计假设为基金投资组合敞口，因为不存在券商仓位数据源。
+2. 哪个官方或管理人数据源将提供带日期的投资组合持仓，可接受的最大披露时限是多久？
+3. 溢价持续性和波动率需要哪些观测窗口：5/20 个交易日、日历日，还是两者都需要？
+4. 净溢价假设是否应允许用户配置，以及首次发布时应以哪套申购/佣金费率为准？
