@@ -1,0 +1,8 @@
+*
+!alembic.ini
+!cloudrun/
+!cloudrun/**
+cloudrun/**/.pytest_cache/
+cloudrun/**/__pycache__/
+cloudrun/**/*.py[cod]
+cloudrun/**/*.db
