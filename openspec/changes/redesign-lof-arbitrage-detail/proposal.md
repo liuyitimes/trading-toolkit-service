@@ -1,32 +1,32 @@
-## Why
+## 背景
 
-The current LOF detail is a 640px dialog that mixes quote fields, a fixed-fee return estimate, generic advice, and a capital-flow prediction. It does not organize evidence around the decisions an arbitrage researcher needs to make: whether the premium survives, whether the position can be entered and exited, and what portfolio or volatility risk is carried during the settlement window.
+当前 LOF 详情是一个 640px 的对话框，混合了报价字段、固定费率收益估算、通用建议和资金流预测。它没有围绕套利研究员需要做出的决策来组织证据：溢价是否能持续、仓位能否进出、以及在结算窗口期间承担的组合或波动率风险。
 
-## What Changes
+## 变更内容
 
-- Replace the LOF detail dialog with a deep-linkable arbitrage-research detail view organized around premium, premium persistence, liquidity, fund holdings exposure, and volatility risk.
-- Separate observed, verified execution data from analytical estimates and unavailable data; mock share-history data MUST NOT be rendered as a position, capital-flow, or risk signal.
-- Add a documented detail-data contract for historical premium/liquidity/volatility observations and disclosed fund holdings, including source and as-of dates.
-- Preserve the existing list and market-overview behavior. The in-progress `lof-market-overview-signals` change remains independent and is not a prerequisite for this detail view.
+- 将 LOF 详情对话框替换为可深度链接的套利研究详情视图，围绕溢价、溢价持续性、流动性、基金持仓敞口和波动率风险组织。
+- 将观测到的已验证执行数据与分析估算和不可用数据区分开；模拟份额历史数据**绝不能**作为仓位、资金流或风险信号渲染。
+- 添加有据可查的详情数据契约，涵盖历史溢价/流动性/波动率观测以及已披露的基金持仓，包括数据源和截至日期。
+- 保留现有的列表和市场总览行为。进行中的 `lof-market-overview-signals` 变更保持独立，不是本详情视图的前置条件。
 
-## Repository scope
+## 仓库范围
 
-This Service change owns the LOF detail API, persisted observations, holdings-disclosure storage, data provenance, and unavailable-state representation. The matching `redesign-lof-arbitrage-detail` change in `trading-toolkit-web` owns route navigation, detail layout, charts, and responsive verification.
+本 Service 变更负责 LOF 详情 API、持久化观测、持仓披露存储、数据溯源和不可用状态表示。`trading-toolkit-web` 仓库中的配套 `redesign-lof-arbitrage-detail` 变更负责路由导航、详情布局、图表和响应式验证。
 
-## Capabilities
+## 能力
 
-### New Capabilities
+### 新增能力
 
-- None.
+- 无。
 
-### Modified Capabilities
+### 变更能力
 
-- `lof-funds`: Add a decision-oriented LOF arbitrage detail requirement, including evidence, unavailable-state, and risk-disclosure rules.
+- `lof-funds`：添加面向决策的 LOF 套利详情需求，包括证据、不可用状态和风险披露规则。
 
-## Impact
+## 影响
 
-- Affected supported module: `trading-toolkit-service` (detail API and persisted observation/holdings data).
-- Public API: a versioned LOF detail endpoint and its evidence metadata will be added; existing list, summary, share-history, and prediction endpoints remain compatible.
-- Data sources/cache: persisted premium and liquidity observations plus dated disclosed holdings are required; data retention and refresh policy must be documented.
-- The unmaintained `trading-toolkit-mp` application is explicitly out of scope.
-- Rollback: retain the existing LOF list; remove the new route and detail endpoint if the evidence contract cannot be maintained, without representing unavailable history as observed data.
+- 受影响的已支持模块：`trading-toolkit-service`（详情 API 和持久化观测/持仓数据）。
+- 公开 API：将新增一个版本化的 LOF 详情端点及其证据元数据；现有的列表、摘要、份额历史和预测端点保持兼容。
+- 数据源/缓存：需要持久化的溢价和流动性观测以及带日期的已披露持仓；数据保留和刷新策略须文档化。
+- 不再维护的 `trading-toolkit-mp` 应用明确排除在外。
+- 回滚：保留现有 LOF 列表；如果证据契约无法维持，则移除新路由和详情端点，且不将不可用历史数据表示为观测数据。

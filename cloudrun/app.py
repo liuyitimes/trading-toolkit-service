@@ -8,6 +8,7 @@ import logging
 import os
 import time
 import traceback
+from functools import wraps
 
 from flask import Flask, request
 from flask_cors import CORS
@@ -23,15 +24,35 @@ from services.cache import (
     warmup_cache,
 )
 from services.lof_arbitrage import get_arbitrage_prediction as _get_lof_arbitrage_prediction
+from services.lof_detail import get_lof_detail
 from services.hk_ipo import refresh_hk_ipo_cache
 from utils.response import api_response, api_error, ErrorCode
 from utils.limiting import limit
 from utils.logging import setup_logging
 
+
+def init_sentry():
+    dsn = os.environ.get('SENTRY_DSN', '').strip()
+    if not dsn:
+        return
+    import sentry_sdk
+    sentry_sdk.init(dsn=dsn, traces_sample_rate=0.0)
+
 # ==================== 初始化 ====================
 
 app = Flask(__name__)
-CORS(app)
+init_sentry()
+
+
+def _cors_origins():
+    configured = os.environ.get(
+        'CORS_ALLOWED_ORIGINS',
+        'http://localhost:5173,http://127.0.0.1:5173',
+    )
+    return [origin.strip() for origin in configured.split(',') if origin.strip()]
+
+
+CORS(app, origins=_cors_origins(), supports_credentials=False)
 
 # 结构化日志
 logger = setup_logging(app)
@@ -73,47 +94,6 @@ def log_request_end(response):
         start = getattr(request, '_start_time', None) or time.time()
         duration = round((time.time() - start) * 1000, 1)
 
-        # 请求正文
-        req_body = None
-        try:
-            if request.is_json and request.data:
-                try:
-                    req_body = request.get_json(silent=True)
-                except Exception:
-                    req_body = str(request.data)[:500]
-        except Exception:
-            req_body = None
-
-        # 响应正文：限制大小，预格式化为字符串，避免前端再做 JSON.stringify
-        import json as _json
-        MAX_RESP_LEN = 8000
-        resp_body_str = None
-        resp_truncated = False
-        try:
-            resp_data = response.get_data(as_text=True)
-            if resp_data:
-                try:
-                    resp_json = _json.loads(resp_data)
-                    resp_body_str = _json.dumps(resp_json, ensure_ascii=False, indent=2)
-                except Exception:
-                    resp_body_str = resp_data
-                if resp_body_str and len(resp_body_str) > MAX_RESP_LEN:
-                    resp_body_str = resp_body_str[:MAX_RESP_LEN] + '\n... (已截断，共 ' + str(len(resp_body_str)) + ' 字符)'
-                    resp_truncated = True
-        except Exception:
-            resp_body_str = '(响应读取失败)'
-
-        # 请求正文预格式化
-        req_body_str = None
-        if req_body is not None:
-            try:
-                req_body_str = _json.dumps(req_body, ensure_ascii=False, indent=2)
-            except Exception:
-                req_body_str = str(req_body)[:500]
-            if req_body_str and len(req_body_str) > MAX_RESP_LEN:
-                req_body_str = req_body_str[:MAX_RESP_LEN] + '\n... (已截断)'
-                resp_truncated = True
-
         log_entry = {
             'id': len(API_LOGS) + 1,
             'time': datetime.now(CST).strftime('%H:%M:%S.%f')[:-3],
@@ -121,9 +101,6 @@ def log_request_end(response):
             'path': request.full_path if request.query_string else request.path,
             'status': response.status_code,
             'duration': duration,
-            'request_body': req_body_str,
-            'response_body': resp_body_str,
-            'truncated': resp_truncated,
         }
 
         API_LOGS.append(log_entry)
@@ -395,6 +372,20 @@ def lof_summary():
     return api_response(data, source=source, cached=cached)
 
 
+@app.route('/api/v1/lof/<code>/detail')
+@limit(60)
+def lof_detail(code):
+    """LOF arbitrage-research detail with dated evidence metadata."""
+    try:
+        data = get_lof_detail(code)
+    except Exception as exc:
+        logger.error('LOF detail failed for %s: %s', code, exc)
+        return api_error(*ErrorCode.DATA_SOURCE_ERROR)
+    if data is None:
+        return api_error('NOT_FOUND', f'LOF {code} not found', 404)
+    return api_response(data, source='direct', cached=False)
+
+
 @app.route('/api/v1/lof/<code>/share-history')
 @limit(60)
 def lof_share_history(code):
@@ -529,7 +520,25 @@ def closed_end_summary():
 
 # ==================== 管理接口 ====================
 
+def admin_api_enabled():
+    return os.environ.get('ENABLE_ADMIN_API', '').lower() in ('1', 'true', 'yes')
+
+
+def require_admin_api(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not admin_api_enabled():
+            return api_error('NOT_FOUND', '未找到接口', 404)
+        return f(*args, **kwargs)
+    return decorated
+
+
+@app.route('/healthz')
+def healthz():
+    return api_response({'status': 'ok'}, source='local', cached=False)
+
 @app.route('/api/v1/admin/health')
+@require_admin_api
 def admin_health():
     """详细健康检查"""
     sources_status = {}
@@ -558,6 +567,7 @@ def admin_health():
 
 
 @app.route('/api/v1/admin/switch-source', methods=['POST'])
+@require_admin_api
 def admin_switch_source():
     """切换数据源"""
     source_name = request.json.get('source') if request.is_json else None
@@ -571,6 +581,7 @@ def admin_switch_source():
 
 
 @app.route('/api/v1/admin/cache/clear', methods=['POST'])
+@require_admin_api
 def admin_cache_clear():
     """清除缓存"""
     module = request.json.get('module') if request.is_json else None
@@ -583,6 +594,7 @@ def admin_cache_clear():
 
 
 @app.route('/api/v1/admin/api-logs')
+@require_admin_api
 def admin_api_logs():
     """查询接口日志"""
     try:
@@ -593,9 +605,7 @@ def admin_api_logs():
         logs = list(API_LOGS)
         if search:
             s = search.lower()
-            logs = [l for l in logs if s in str(l.get('path', '')).lower()
-                    or s in str(l.get('response_body', '')).lower()
-                    or s in str(l.get('request_body', '')).lower()]
+            logs = [l for l in logs if s in str(l.get('path', '')).lower()]
         logs.reverse()
         total = len(logs)
         start = (page - 1) * page_size
@@ -615,6 +625,7 @@ def admin_api_logs():
 
 
 @app.route('/api/v1/admin/api-logs/clear', methods=['POST'])
+@require_admin_api
 def admin_api_logs_clear():
     """清空接口日志"""
     try:
@@ -673,7 +684,7 @@ def compat_hkipo_summary():
 
 @app.route('/api/health')
 def compat_health():
-    return admin_health()
+    return healthz()
 
 
 # ==================== 用户 API ====================

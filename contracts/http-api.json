@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "responseEnvelope": ["success", "data", "meta"],
+  "endpoints": [
+    { "id": "health", "method": "GET", "path": "/healthz" },
+    { "id": "market.overview", "method": "GET", "path": "/api/v1/market/overview" },
+    { "id": "market.sentiment", "method": "GET", "path": "/api/v1/market/sentiment" },
+    { "id": "market.fundFlow", "method": "GET", "path": "/api/v1/market/fund-flow" },
+    { "id": "convertible.list", "method": "GET", "path": "/api/v1/convertible/list" },
+    { "id": "convertible.signals", "method": "GET", "path": "/api/v1/convertible/signals" },
+    { "id": "convertible.temperature", "method": "GET", "path": "/api/v1/convertible/temperature" },
+    { "id": "convertible.detail", "method": "GET", "path": "/api/v1/convertible/detail/:code" },
+    { "id": "convertible.pending", "method": "GET", "path": "/api/v1/convertible/pending" },
+    { "id": "placement.sync", "method": "POST", "path": "/api/v1/placement/sync" },
+    { "id": "placement.list", "method": "GET", "path": "/api/v1/placement/list" },
+    { "id": "lof.list", "method": "GET", "path": "/api/v1/lof/list" },
+    { "id": "lof.opportunities", "method": "GET", "path": "/api/v1/lof/opportunities" },
+    { "id": "lof.summary", "method": "GET", "path": "/api/v1/lof/summary" },
+    { "id": "lof.shareHistory", "method": "GET", "path": "/api/v1/lof/:code/share-history" },
+    { "id": "lof.arbitragePredict", "method": "GET", "path": "/api/v1/lof/:code/arbitrage-predict" },
+    { "id": "hkipo.list", "method": "GET", "path": "/api/v1/hkipo/list" },
+    { "id": "hkipo.upcoming", "method": "GET", "path": "/api/v1/hkipo/upcoming" },
+    { "id": "hkipo.summary", "method": "GET", "path": "/api/v1/hkipo/summary" },
+    { "id": "hkipo.detail", "method": "GET", "path": "/api/v1/hkipo/detail/:code" },
+    { "id": "hkipo.sync", "method": "POST", "path": "/api/v1/hkipo/sync" },
+    { "id": "closedEnd.list", "method": "GET", "path": "/api/v1/closed-end/list" },
+    { "id": "closedEnd.summary", "method": "GET", "path": "/api/v1/closed-end/summary" },
+    { "id": "user.login", "method": "POST", "path": "/api/v1/user/login" },
+    { "id": "user.favorites", "method": "GET", "path": "/api/v1/user/favorites" }
+  ]
+}

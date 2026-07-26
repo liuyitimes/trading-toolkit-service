@@ -1,66 +1,66 @@
-# API Contract Specification
+# API 契约规格
 
-## Purpose
+## 目的
 
-Define the supported HTTP contract between the Web application and Flask service.
+定义 Web 应用与 Flask 服务之间受支持的 HTTP 契约。
 
-## Requirements
+## 要求
 
-### Requirement: Versioned response envelope
+### 要求：版本化响应信封
 
-Business endpoints SHALL use the `/api/v1/` prefix and return a normalized envelope containing `success`, `data`, and `meta` on successful responses.
+业务端点必须使用 `/api/v1/` 前缀，并在成功响应中返回包含 `success`、`data` 和 `meta` 的规范化信封。
 
-#### Scenario: A data request succeeds
+#### 场景：数据请求成功
 
-- GIVEN a client requests a supported business endpoint
-- WHEN the service obtains data or an allowed cache result
-- THEN it returns `{ "success": true, "data": ..., "meta": { ... } }`
-- AND `meta` communicates source, cache state, and update information where available.
+- **假定**：客户端请求受支持的业务端点。
+- **当**：服务取得数据或允许使用的缓存结果。
+- **则**：返回 `{ "success": true, "data": ..., "meta": { ... } }`。
+- **并且**：`meta` 在可用时传达来源、缓存状态和更新信息。
 
-### Requirement: Error contract
+### 要求：错误契约
 
-The service SHALL return a structured error response for invalid input, missing resources, and upstream failures. Clients SHALL surface an unsuccessful envelope as an error rather than treating it as domain data.
+服务必须为无效输入、缺失资源和上游失败返回结构化错误响应。客户端必须将失败信封呈现为错误，而不是当作领域数据处理。
 
-#### Scenario: A requested instrument does not exist
+#### 场景：请求的标的不存在
 
-- GIVEN a client requests a detail endpoint with an unknown code
-- WHEN no matching record is available
-- THEN the service returns a not-found error response
-- AND the Web client rejects the request instead of rendering an empty instrument as valid.
+- **假定**：客户端使用未知代码请求详情端点。
+- **当**：没有可用的匹配记录。
+- **则**：服务返回未找到错误响应。
+- **并且**：Web 客户端拒绝请求，不将空标的渲染为有效数据。
 
-### Requirement: Compatibility routes
+### 要求：兼容路由
 
-Legacy `/api/` routes MAY remain for explicitly supported compatibility endpoints, but new client behavior SHALL target `/api/v1/`.
+旧版 `/api/` 路由可以保留给明确受支持的兼容端点，但新的客户端行为必须以 `/api/v1/` 为目标。
 
-#### Scenario: A new endpoint is introduced
+#### 场景：引入新端点
 
-- GIVEN a new service capability is added
-- WHEN its route is designed
-- THEN its canonical path uses `/api/v1/`
-- AND no legacy alias is added unless a documented migration requires it.
+- **假定**：新增一项服务能力。
+- **当**：设计其路由。
+- **则**：规范路径使用 `/api/v1/`。
+- **并且**：除非有记录在案的迁移需要，否则不新增旧版别名。
 
-### Requirement: User data authorization
+### 要求：用户数据授权
 
-Favorites, reminders, and settings endpoints SHALL require the service authentication mechanism and SHALL scope reads and writes to the authenticated `openid`.
+收藏、提醒和设置端点必须要求服务认证机制，并将读写范围限定为已认证的 `openid`。
 
-#### Scenario: A user deletes a favorite
+#### 场景：用户删除收藏
 
-- GIVEN an authenticated request supplies a code and type
-- WHEN the delete endpoint executes
-- THEN only the matching favorite owned by that `openid` is deleted.
+- **假定**：已认证请求提供代码和类型。
+- **当**：删除端点执行。
+- **则**：仅删除该 `openid` 所拥有的匹配收藏。
 
-### Requirement: Client-server contract alignment
+### 要求：客户端与服务端契约对齐
 
-Web API client methods SHALL match implemented service routes and request methods. A mismatch SHALL be treated as a contract defect and tracked before relying on the capability.
+Web API 客户端方法必须与已实现的服务路由和请求方法一致。不匹配必须视为契约缺陷并在依赖该能力前跟踪。
 
-#### Scenario: A Web client toggles a favorite
+#### 场景：Web 客户端切换收藏
 
-- GIVEN the current Web client exposes `POST /api/v1/user/favorites/toggle`
-- WHEN the service does not implement that route
-- THEN the capability is documented as a known contract gap
-- AND a future change aligns client and service before presenting toggle behavior as supported.
+- **假定**：当前 Web 客户端公开 `POST /api/v1/user/favorites/toggle`。
+- **当**：服务未实现该路由。
+- **则**：该能力作为已知契约缺口记录。
+- **并且**：后续变更必须在将切换行为展示为受支持前对齐客户端和服务端。
 
-## Known contract gaps
+## 已知契约缺口
 
-- The current Web `userApi.toggleFavorite` method targets `/api/v1/user/favorites/toggle`, while the service exposes `GET`, `POST`, and `DELETE /api/v1/user/favorites`. This baseline does not assert the toggle route exists.
-- The Web client does not currently expose all service user, placement, or administrative endpoints. Absence of a client wrapper is not proof that the service endpoint is unsupported.
+- 当前 Web 的 `userApi.toggleFavorite` 方法指向 `/api/v1/user/favorites/toggle`，而服务公开 `GET`、`POST` 和 `DELETE /api/v1/user/favorites`。此基线不声明切换路由存在。
+- Web 客户端目前未公开所有服务用户、配售或管理端点。缺少客户端封装不代表服务端点不受支持。

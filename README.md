@@ -1,14 +1,14 @@
 # Trading Toolkit Service（后端服务）
 
-金融投资工具箱后端服务，提供可转债分析、LOF 基金套利监控、港股打新资讯的 API 接口。
+Trading Toolkit 的 Flask 后端服务，为配套的 Vue Web 应用 `trading-toolkit-web` 提供市场数据、策略分析和用户数据 API。
 
-> 小程序前端已独立为单独仓库 `trading-toolkit-mp`（微信小程序原生）。
+本文只介绍服务端如何运行和验证。接口字段与跨端命名以 [接口与字段约定](docs/DATA_GUIDE.md) 为准；后端实现细节见 [本地开发](docs/development.md)。
 
 ## 功能
 
 | 模块 | 功能 | 数据源 |
 |------|------|--------|
-| 可转债 | 实时行情、双低/强赎/折价/下修信号、市场温度、待发/配售 | 新浪财经 + 东方财富（直连 HTTP） |
+| 可转债 | 实时行情、双低/强赎/折价/下修信号、市场温度、待发配债候选标的 | 新浪财经 + 东方财富（直连 HTTP） |
 | LOF 基金 | 实时溢价排行、套利机会、申购状态 | 东方财富公开接口 |
 | 港股打新 | IPO 列表、申购信息、上市表现 | 同花顺公开接口 |
 | 市场概览 | 市场情绪、资金流向、板块热度 | 新浪财经、乐咕、东方财富公开接口 |
@@ -51,7 +51,7 @@ python app.py
 ```bash
 curl http://localhost:8080/api/v1/market/overview
 curl http://localhost:8080/api/v1/convertible/list?page=1&page_size=3
-curl http://localhost:8080/api/v1/admin/health
+curl http://localhost:8080/healthz
 ```
 
 ## 项目结构
@@ -77,7 +77,7 @@ curl http://localhost:8080/api/v1/admin/health
 
 ## 数据可靠性
 
-服务直接请求新浪财经、东方财富、同花顺和乐咕等公开接口。对单源端点，回源失败时优先返回带 `data_status: "stale"` 的上次成功缓存；无缓存时返回不可用状态，不以 Mock 数据伪装实时结果。详见 [数据源与缓存](docs/architecture/data-sources.md)。
+服务直接请求新浪财经、东方财富、同花顺和乐咕等公开接口。常规读取接口优先使用有效缓存；无法取得数据时返回结构化错误（待发配债候选标的列表在无数据时返回空数组），不以 Mock 数据伪装实时结果。缓存命中和来源信息见响应 `meta`。详见 [数据源与缓存](docs/architecture/data-sources.md)。
 
 ## 接口清单
 
@@ -106,11 +106,11 @@ curl http://localhost:8080/api/v1/admin/health
 | `GET /api/v1/hkipo/upcoming` | 申购中 IPO |
 | `GET/POST/DELETE /api/v1/user/favorites` | 用户自选管理 |
 
-完整字段映射见 [docs/DATA_GUIDE.md](docs/DATA_GUIDE.md)，文档索引见 [docs/README.md](docs/README.md)。
+完整字段映射见 [docs/DATA_GUIDE.md](docs/DATA_GUIDE.md)，文档索引见 [docs/README.md](docs/README.md)。Web 应用的开发说明位于独立仓库 `trading-toolkit-web/docs/development.md`。
 
 ## 部署
 
-后端通过 Docker 容器部署到云托管（如腾讯云 CloudBase）。详见 [docs/BACKEND_CICD_GUIDE.md](docs/BACKEND_CICD_GUIDE.md)。
+Demo 服务通过 Docker 部署到 Render 新加坡，详见 [docs/BACKEND_CICD_GUIDE.md](docs/BACKEND_CICD_GUIDE.md)。
 
 ## 环境配置
 

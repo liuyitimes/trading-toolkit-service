@@ -1,20 +1,20 @@
-## 1. Product and Data Decisions
+## 1. 产品与数据决策
 
-- [x] 1.1 Define holdings as fund portfolio exposure; user brokerage positions are out of scope.
-- [ ] 1.2 Select a verified fund-portfolio disclosure source and freshness limit; the implementation returns unavailable until one exists.
-- [x] 1.3 Define 5/20-session observation windows for persistence, liquidity comparison, and volatility components.
-- [x] 1.4 Document the 0.15% purchase-fee and 0.05% sell-commission assumptions as non-account-specific.
+- [x] 1.1 将持仓定义为基金投资组合敞口；用户券商持仓不在范围内。
+- [ ] 1.2 选定已验证的基金投资组合披露数据源及数据时效限制；在确定数据源之前，实现应返回不可用状态。
+- [x] 1.3 定义用于持续性、流动性对比和波动率组件的 5/20 个交易日观察窗口。
+- [x] 1.4 将 0.15% 申购费和 0.05% 赎回佣金的假设记录为非账户特定的。
 
-## 2. Service Detail Contract
+## 2. 服务端详细契约
 
-- [x] 2.1 Add a persisted, source-tagged LOF observation store that records only valid quotes and does not backfill missing history with estimates.
-- [x] 2.2 Add a dated holdings-disclosure store and explicit unavailable-state representation.
-- [x] 2.3 Implement `GET /api/v1/lof/:code/detail` with instrument, execution, premium, liquidity, holdings, volatility, and provenance groups.
-- [x] 2.4 Keep mock or insufficient `lof_arbitrage` history out of detail decision metrics.
-- [x] 2.5 Add service tests for verified data, stale data, insufficient history, and unavailable holdings.
+- [x] 2.1 添加带数据源标记的 LOF 观测持久化存储，仅记录有效报价，不使用估算值回填缺失历史。
+- [x] 2.2 添加带日期的持仓披露存储和明确的不可用状态表示。
+- [x] 2.3 实现 `GET /api/v1/lof/:code/detail` 接口，包含标的、执行、溢价、流动性、持仓、波动率和溯源分组。
+- [x] 2.4 禁止模拟或不完整的 `lof_arbitrage` 历史数据进入详细决策指标。
+- [x] 2.5 为已验证数据、过期数据、历史数据不足和持仓不可用等场景添加服务测试。
 
-## 3. Verification and Delivery
+## 3. 验证与交付
 
-- [x] 3.1 Add focused API contract and derived-metric tests.
-- [x] 3.2 Run the backend test suite and API-contract verification.
-- [ ] 3.3 Validate the OpenSpec change and archive it after the implementation is accepted.
+- [x] 3.1 添加有针对性的 API 契约和派生指标测试。
+- [x] 3.2 运行后端测试套件和 API 契约验证。
+- [ ] 3.3 验证 OpenSpec 变更，并在实现验收后归档。

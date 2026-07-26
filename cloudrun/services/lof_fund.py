@@ -8,6 +8,7 @@ off-exchange subscription can be sold as an on-exchange LOF position.
 
 import json
 import logging
+import math
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -23,12 +24,15 @@ _TENCENT_QUOTE_URL = 'https://qt.gtimg.cn/q='
 _TENCENT_KLINE_URL = 'https://web.ifzq.gtimg.cn/appstock/app/kline/kline'
 _LOF_BOARD = 'b:MK0404'
 _RULES_FILE = Path(__file__).resolve().parents[1] / 'data' / 'lof_execution_rules.json'
+_THEME_TAXONOMY_FILE = Path(__file__).resolve().parents[1] / 'data' / 'lof_theme_taxonomy.json'
+_DAILY_SUBSCRIPTIONS_FILE = Path(__file__).resolve().parents[1] / 'data' / 'lof_daily_subscription_records.json'
 _RULE_PATH_MAX_AGE_DAYS = 30
 _SUBSCRIPTION_MAX_AGE_DAYS = 1
 _MAX_LIQUIDITY_LOOKUPS = 30
 _LIQUIDITY_CACHE_TTL_SECONDS = 60 * 60
 _QUOTE_BATCH_SIZE = 50
 _liquidity_cache = {}
+_SHARE_UNIT_MULTIPLIERS = {'shares': 1, '10k_shares': 10_000}
 
 
 def _now():
@@ -86,6 +90,191 @@ def _load_execution_rules():
     except (OSError, json.JSONDecodeError) as exc:
         logger.warning('[LOF] unable to load execution rules: %s', exc)
         return {}
+
+
+def _load_json_object(path):
+    try:
+        with path.open('r', encoding='utf-8') as source_file:
+            value = json.load(source_file)
+        return value if isinstance(value, dict) else {}
+    except FileNotFoundError:
+        return {}
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning('[LOF] unable to load %s: %s', path.name, exc)
+        return {}
+
+
+def _load_theme_taxonomy():
+    return _load_json_object(_THEME_TAXONOMY_FILE)
+
+
+def _load_daily_subscription_records():
+    return _load_json_object(_DAILY_SUBSCRIPTIONS_FILE).get('records') or []
+
+
+def _derive_hot_direction(items, taxonomy=None, now=None):
+    """Select the positive-premium theme with the highest turnover-weighted premium."""
+    taxonomy = taxonomy if taxonomy is not None else _load_theme_taxonomy()
+    classifications = taxonomy.get('funds') or {}
+    themes = {}
+    unclassified_count = 0
+    quote_dates = []
+    for item in items:
+        code = str(item.get('代码') or '')
+        classification = classifications.get(code) or {}
+        theme = str(classification.get('theme') or '').strip()
+        basis = str(classification.get('basis') or '').strip()
+        premium = safe_float(item.get('溢价率'))
+        turnover = safe_float(item.get('成交额'))
+        if not item.get('报价有效') or premium <= 0 or turnover <= 0:
+            continue
+        quote_time = _parse_iso(item.get('行情时间'))
+        if quote_time:
+            quote_dates.append(quote_time.date())
+        if not theme:
+            unclassified_count += 1
+            continue
+        stats = themes.setdefault(theme, {
+            'premium_turnover': 0.0,
+            'turnover': 0.0,
+            'sample_count': 0,
+            'bases': set(),
+            'constituents': [],
+        })
+        stats['premium_turnover'] += premium * turnover
+        stats['turnover'] += turnover
+        stats['sample_count'] += 1
+        if basis:
+            stats['bases'].add(basis)
+        stats['constituents'].append({
+            'code': code,
+            'name': str(item.get('名称') or '').strip(),
+            'basis': basis,
+            'premium': round(premium, 2),
+            'turnover_yuan': round(turnover, 2),
+        })
+
+    candidates = []
+    for name, stats in themes.items():
+        if stats['turnover'] <= 0:
+            continue
+        candidates.append({
+            'name': name,
+            'weighted_premium': round(stats['premium_turnover'] / stats['turnover'], 2),
+            'sample_count': stats['sample_count'],
+            'turnover_yuan': round(stats['turnover'], 2),
+            'method': '成交额加权正溢价',
+            'source': _theme_taxonomy_source(stats['bases']),
+            'constituents': stats['constituents'],
+        })
+    retrieved_at = (now or _now()).isoformat()
+    as_of = max(quote_dates).isoformat() if quote_dates else None
+    if not candidates:
+        return {
+            'status': 'unavailable',
+            'reason': '有效正溢价分类样本不足',
+            'name': None,
+            'weighted_premium': None,
+            'sample_count': 0,
+            'turnover_yuan': 0.0,
+            'unclassified_count': unclassified_count,
+            'constituents': [],
+            'method': '成交额加权正溢价',
+            'as_of': as_of,
+            'source': 'LOF 主题分类表',
+            'retrieved_at': retrieved_at,
+        }
+    result = max(candidates, key=lambda item: (item['weighted_premium'], item['turnover_yuan']))
+    result['status'] = 'available'
+    result['reason'] = None
+    result['unclassified_count'] = unclassified_count
+    result['as_of'] = as_of
+    result['retrieved_at'] = retrieved_at
+    return result
+
+
+def _theme_taxonomy_source(bases):
+    if not bases:
+        return 'LOF 主题分类表'
+    return f"LOF 主题分类表（{'、'.join(sorted(bases))}）"
+
+
+def _daily_subscription_unavailable(reason, expected_date=None, rejected_count=0):
+    return {
+        'status': 'unavailable',
+        'reason': reason,
+        'share_date': expected_date.isoformat() if expected_date else None,
+        'capital_yuan': None,
+        'account_count_lower_bound': None,
+        'investor_limit_lower_bound': None,
+        'record_count': 0,
+        'rejected_record_count': rejected_count,
+    }
+
+
+def _record_limit_is_valid(record, share_date):
+    subject = record.get('limit_subject')
+    amount = safe_float(record.get('limit_amount'))
+    starts_at = _parse_iso(record.get('limit_effective_from'))
+    ends_at = _parse_iso(record.get('limit_effective_to'))
+    if subject not in {'account', 'investor'} or amount <= 0:
+        return False
+    if not record.get('limit_source_url') or record.get('all_channels_verified') is not True:
+        return False
+    return bool(starts_at and ends_at and starts_at.date() <= _parse_iso(share_date).date() <= ends_at.date())
+
+
+def _summarize_daily_subscriptions(records, now=None):
+    """Aggregate only dated, auditable positive LOF net-subscription records."""
+    expected_date = _previous_trading_weekday(now)
+    expected_text = expected_date.isoformat()
+    day_records = [record for record in records if str(record.get('share_date') or '') == expected_text]
+    if not day_records:
+        return _daily_subscription_unavailable('暂无经核验的上一交易日 LOF 份额记录', expected_date)
+
+    capital_yuan = 0.0
+    account_lower_bound = 0
+    investor_lower_bound = 0
+    accepted_count = 0
+    rejected_count = 0
+    for record in day_records:
+        unit_multiplier = _SHARE_UNIT_MULTIPLIERS.get(record.get('share_unit'))
+        net_share_change = safe_float(record.get('net_share_change'))
+        nav = safe_float(record.get('nav'))
+        has_required_evidence = bool(
+            record.get('fund_code')
+            and record.get('share_class')
+            and record.get('source_url')
+            and _parse_iso(record.get('retrieved_at'))
+            and record.get('non_subscription_adjustments_excluded') is True
+            and str(record.get('nav_date') or '') == expected_text
+        )
+        if not unit_multiplier or net_share_change <= 0 or nav <= 0 or not has_required_evidence:
+            rejected_count += 1
+            continue
+
+        record_capital = net_share_change * unit_multiplier * nav
+        capital_yuan += record_capital
+        accepted_count += 1
+        if _record_limit_is_valid(record, expected_text):
+            lower_bound = math.ceil(record_capital / safe_float(record['limit_amount']))
+            if record['limit_subject'] == 'account':
+                account_lower_bound += lower_bound
+            else:
+                investor_lower_bound += lower_bound
+
+    if not accepted_count:
+        return _daily_subscription_unavailable('上一交易日记录缺少单位、净值或原始公告证据', expected_date, rejected_count)
+    return {
+        'status': 'available',
+        'reason': None,
+        'share_date': expected_text,
+        'capital_yuan': round(capital_yuan, 2),
+        'account_count_lower_bound': account_lower_bound or None,
+        'investor_limit_lower_bound': investor_lower_bound or None,
+        'record_count': accepted_count,
+        'rejected_record_count': rejected_count,
+    }
 
 
 def _resolve_execution_rule(code, now=None, rules=None):
@@ -149,6 +338,14 @@ def _latest_trading_weekday(now=None):
     guessed here: an older quote remains visible but is marked for review.
     """
     current = (now or _now()).date()
+    while current.weekday() >= 5:
+        current -= timedelta(days=1)
+    return current
+
+
+def _previous_trading_weekday(now=None):
+    """Return the trading weekday immediately before the current calendar day."""
+    current = (now or _now()).date() - timedelta(days=1)
     while current.weekday() >= 5:
         current -= timedelta(days=1)
     return current
@@ -350,6 +547,15 @@ def get_lof_list():
     for item in candidates:
         item['近5日平均成交额'] = _five_day_average_turnover(item['代码'])
 
+    # Persist only normalized valid observations; missing fields are never backfilled.
+    try:
+        from services.lof_detail import record_observations
+        from services.normalizer import normalize_lof_list
+
+        record_observations(normalize_lof_list(result))
+    except Exception as exc:
+        logger.warning('[LOF] observation persistence failed: %s', exc)
+
     return result
 
 
@@ -363,6 +569,7 @@ def get_lof_opportunities():
 def get_lof_market_summary():
     items = get_lof_list()
     premiums = [item['溢价率'] for item in items]
+    daily_subscription = _summarize_daily_subscriptions(_load_daily_subscription_records())
     return {
         'count': len(items),
         'positive_count': sum(1 for premium in premiums if premium > 0),
@@ -370,4 +577,6 @@ def get_lof_market_summary():
         'verified_path_count': sum(1 for item in items if item['交易路径已验证']),
         'top_premium': round(max(premiums), 2) if premiums else 0,
         'premium_avg': round(sum(premiums) / len(premiums), 2) if premiums else 0,
+        'hot_direction': _derive_hot_direction(items),
+        'daily_subscription': daily_subscription,
     }

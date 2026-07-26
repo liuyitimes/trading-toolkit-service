@@ -1,50 +1,50 @@
-# System Governance Specification
+# 系统治理规格
 
-## Purpose
+## 目的
 
-Define the supported product boundary and the rules that keep the baseline specifications authoritative.
+定义受支持的产品边界，以及保持基线规范权威性的规则。
 
-## Requirements
+## 要求
 
-### Requirement: Supported module boundary
+### 要求：受支持的模块边界
 
-The project SHALL treat the Web application, Flask service, and backtest package as supported modules. The `trading-toolkit-mp` directory SHALL be excluded from routine maintenance and feature delivery.
+项目必须将 Web 应用、Flask 服务和回测包视为受支持的模块。`trading-toolkit-mp` 目录必须排除在日常维护和功能交付之外。
 
-#### Scenario: A feature changes a shared financial rule
+#### 场景：一项功能变更影响了共享的金融规则
 
-- GIVEN a requested change affects a rule consumed by the Web application and service
-- WHEN the change is planned
-- THEN its OpenSpec change identifies both supported modules
-- AND it does not require a mini-program update unless the user explicitly reactivates that module.
+- **假定**：请求的变更影响了 Web 应用和服务共同使用的规则。
+- **当**：该变更被规划时。
+- **则**：其 OpenSpec 变更需标识出涉及的两个受支持模块。
+- **并且**：除非用户明确重新激活该模块，否则不需要更新小程序。
 
-### Requirement: Baseline-first change planning
+### 要求：基线优先的变更规划
 
-Medium or large behavior changes SHALL begin from an applicable baseline specification and SHALL be recorded as an OpenSpec delta before implementation.
+中等或大型行为变更必须从适用的基线规范开始，并在实现前作为 OpenSpec delta（增量变更）记录。
 
-#### Scenario: A public API field changes
+#### 场景：公共 API 字段发生变更
 
-- GIVEN a developer intends to add, remove, or change a public API field
-- WHEN the work is planned
-- THEN the change includes proposal, delta specification, design, tasks, compatibility handling, and verification.
+- **假定**：开发人员打算添加、移除或更改一个公共 API 字段。
+- **当**：该工作被规划时。
+- **则**：该变更包括提案、delta 规格、设计、任务、兼容性处理和验证。
 
-### Requirement: Evidence precedence
+### 要求：证据优先级
 
-When repository sources disagree, current executable code and tests SHALL take precedence over baseline specifications, which take precedence over current documentation and historical records.
+当仓库中的源文件存在不一致时，当前可执行代码和测试优先于基线规范，基线规范优先于当前文档和历史记录。
 
-#### Scenario: A historical plan conflicts with a route implementation
+#### 场景：历史计划与路由实现冲突
 
-- GIVEN a plan names a retired data-source fallback
-- WHEN a developer documents or extends the system
-- THEN the developer uses the current direct-HTTP implementation as the behavioral baseline
-- AND records the historical item only as superseded context.
+- **假定**：某个计划引用了一个已废弃的数据源回退方案。
+- **当**：开发人员记录或扩展系统时。
+- **则**：开发人员使用当前的直接 HTTP 实现作为行为基线。
+- **并且**：仅将历史条目作为已被替代的上下文记录。
 
-### Requirement: Delivery state separation
+### 要求：交付状态分离
 
-Delivery reports SHALL distinguish implemented, verified, and operationally available states.
+交付报告必须区分已实现、已验证和运营可用三种状态。
 
-#### Scenario: A UI change builds locally
+#### 场景：一项 UI 变更在本地构建成功
 
-- GIVEN the frontend build succeeds
-- WHEN the work is reported
-- THEN the report identifies build success as verification evidence
-- AND does not claim production availability without deployment and runtime evidence.
+- **假定**：前端构建成功。
+- **当**：该工作被汇报时。
+- **则**：报告将构建成功标识为验证证据。
+- **并且**：在没有部署和运行时证据的情况下不得声称生产环境可用。

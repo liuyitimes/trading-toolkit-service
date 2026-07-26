@@ -1,51 +1,51 @@
-# Platform Architecture Specification
+# 平台架构规格
 
-## Purpose
+## 目的
 
-Describe the boundaries and runtime responsibilities of the supported system.
+描述受支持系统的边界和运行时职责。
 
-## Requirements
+## 要求
 
-### Requirement: Web and service separation
+### 要求：Web 与服务分离
 
-The Web application SHALL render decision-support workflows and consume versioned HTTP APIs. The Flask service SHALL own data acquisition, domain calculations, caching, persistent user data, and API response envelopes.
+Web 应用必须渲染决策支持工作流并消费版本化的 HTTP API。Flask 服务必须负责数据采集、领域计算、缓存、持久化用户数据和 API 响应信封。
 
-#### Scenario: A page loads market data
+#### 场景：页面加载行情数据
 
-- GIVEN a user opens a supported Web route
-- WHEN the route requires remote market data
-- THEN the Web API client requests the Flask `/api/v1/` endpoint
-- AND the service obtains or returns normalized domain data rather than exposing upstream response shapes.
+- **假定**：用户打开一个受支持的 Web 路由。
+- **当**：该路由需要远程行情数据时。
+- **则**：Web API 客户端请求 Flask 的 `/api/v1/` 端点。
+- **并且**：服务获取或返回规范化的领域数据，而非暴露上游响应结构。
 
-### Requirement: Direct upstream integration
+### 要求：直接上游集成
 
-The service SHALL use the `DirectSource` facade, domain services, and `http_client` wrappers for upstream data access. New runtime dependencies on `akshare`, `efinance`, or `tushare` SHALL NOT be introduced as implicit fallback sources.
+服务必须使用 `DirectSource` 门面、领域服务和 `http_client` 封装器进行上游数据访问。不得引入对 `akshare`、`efinance` 或 `tushare` 的新运行时依赖作为隐式回退数据源。
 
-#### Scenario: A new Eastmoney request is added
+#### 场景：新增一项东财请求
 
-- GIVEN a service needs Eastmoney data
-- WHEN the upstream call is implemented
-- THEN it uses the `em_get` wrapper
-- AND inherits the configured timeout, retry, and serialized rate-limit behavior.
+- **假定**：某项服务需要东财数据。
+- **当**：实现上游调用时。
+- **则**：使用 `em_get` 封装器。
+- **并且**：继承已配置的超时、重试和串行限流行为。
 
-### Requirement: Normalized internal boundaries
+### 要求：规范化的内部边界
 
-Service domain modules SHALL emit English `snake_case` fields and SHALL not make clients interpret upstream Chinese field names.
+服务领域模块必须输出英文 `snake_case` 字段，且不得要求客户端解读上游的中文字段名。
 
-#### Scenario: An upstream field is renamed
+#### 场景：上游字段被重命名
 
-- GIVEN an upstream provider changes a raw field name
-- WHEN the service adapts its parser
-- THEN the normalized public field remains stable where possible
-- AND any unavoidable contract change follows an OpenSpec API delta.
+- **假定**：上游提供方更改了原始字段名称。
+- **当**：服务适配其解析器时。
+- **则**：规范化的公共字段在可能的情况下保持稳定。
+- **并且**：任何不可避免的契约变更需遵循 OpenSpec API delta（增量变更）。
 
-### Requirement: Persistence and cache tiers
+### 要求：持久化与缓存层级
 
-The service SHALL support development-friendly local persistence/cache backends and production database/cache backends without changing public behavior. Cache state SHALL never be the sole evidence that a datum is fresh.
+服务必须支持对开发友好的本地持久化/缓存后端以及生产数据库/缓存后端，且不改变公共行为。缓存状态不得作为数据新鲜度的唯一证据。
 
-#### Scenario: Development runs without Redis
+#### 场景：开发环境不使用 Redis
 
-- GIVEN no `REDIS_URL` is configured
-- WHEN the service starts locally
-- THEN it uses its supported fakeredis or in-memory fallback
-- AND maintains the documented cache and response semantics.
+- **假定**：未配置 `REDIS_URL`。
+- **当**：服务在本地启动时。
+- **则**：使用其受支持的 fakeredis 或内存回退方案。
+- **并且**：保持文档中记录的缓存和响应语义。

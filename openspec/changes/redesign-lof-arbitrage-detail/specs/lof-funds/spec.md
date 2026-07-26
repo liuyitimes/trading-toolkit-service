@@ -1,37 +1,37 @@
-## ADDED Requirements
+## 新增需求
 
-### Requirement: LOF detail evidence and unavailable states
+### 需求：LOF 详情证据与不可用状态
 
-The LOF detail service SHALL return source, observation date, retrieval time, and freshness state for premium history, liquidity history, disclosed fund holdings, and risk inputs. It MUST distinguish fund portfolio holdings from a user's brokerage position; the service SHALL NOT claim either category when it only has total fund shares or modeled capital-flow data.
+LOF 详情服务**应**为溢价历史、流动性历史、已披露基金持仓和风险输入返回数据源、观测日期、获取时间和时效性状态。它**必须**区分基金投资组合持仓与用户的券商持仓；当服务仅持有基金总份额或模拟资金流数据时，**不得**声称持有任一类别的持仓。
 
-#### Scenario: Disclosed fund holdings are available
+#### 场景：已披露的基金持仓可用
 
-- **GIVEN** a dated official or manager-published portfolio disclosure is available
-- **WHEN** the detail service returns holdings exposure
-- **THEN** it includes the disclosure date, source, concentration metrics, and top holdings
-- **AND THEN** it identifies the data as fund portfolio holdings rather than user holdings.
+- **假定** 有带日期的官方或管理人发布的投资组合披露
+- **当** 详情服务返回持仓敞口时
+- **则** 包含披露日期、数据源、集中度指标和前十大持仓
+- **且** 将数据标识为基金投资组合持仓而非用户持仓。
 
-#### Scenario: A required historical or holdings input is unavailable
+#### 场景：所需的历史或持仓输入不可用
 
-- **GIVEN** no verified source exists for a requested history or holdings input
-- **WHEN** the detail service builds its response
-- **THEN** it returns an explicit unavailable state and its source status
-- **AND THEN** it does not substitute zeroes, mock history, or turnover-derived values.
+- **假定** 对于请求的历史或持仓输入不存在已验证的数据源
+- **当** 详情服务构建其响应时
+- **则** 返回明确的不可用状态及其数据源状态
+- **且** 不使用零值、模拟历史或基于换手率推算的值替代。
 
-### Requirement: LOF premium persistence, liquidity, and volatility risk disclosure
+### 需求：LOF 溢价持续性、流动性与波动率风险披露
 
-The system SHALL present premium persistence and settlement-window risk as dated analysis, not as a trade instruction. Persistence SHALL be calculated from persisted observed premium snapshots; liquidity SHALL include current and historical turnover or volume when available; volatility SHALL expose the measured window and inputs used for price, NAV, and premium variation.
+系统**应**将溢价持续性和结算窗口风险作为带日期的分析呈现，而非交易指令。持续性**应**基于持久化的溢价观测快照计算；流动性**应**在可用时包含当前和历史换手量或成交量；波动率**应**暴露所使用的观测窗口以及价格、NAV 和溢价变动的输入数据。
 
-#### Scenario: Sufficient observed history is available
+#### 场景：有充足的历史观测可用
 
-- **GIVEN** the detail service has sufficient dated premium, price, NAV, and liquidity observations
-- **WHEN** it builds the detail analysis
-- **THEN** it reports the observation window, premium range or duration, liquidity comparison, and volatility measures
-- **AND THEN** it separates current observed values from derived risk indicators.
+- **假定** 详情服务拥有足够的带日期溢价、价格、NAV 和流动性观测
+- **当** 构建详情分析时
+- **则** 报告观测窗口、溢价区间或持续时间、流动性对比和波动率度量
+- **且** 将当前观测值与派生风险指标区分开。
 
-#### Scenario: History is insufficient or simulated
+#### 场景：历史数据不足或为模拟数据
 
-- **GIVEN** the available history is shorter than the documented window or is sourced from a mock fallback
-- **WHEN** the detail service builds premium persistence or risk fields
-- **THEN** it returns the analysis as unavailable or simulated with the source status
-- **AND THEN** it excludes that data from any decision label, risk grade, or expected-return conclusion.
+- **假定** 可用历史短于有据可查的窗口，或来自模拟回退
+- **当** 详情服务构建溢价持续性或风险字段时
+- **则** 将分析结果标记为不可用或模拟数据，并附数据源状态
+- **且** 将该数据排除在任何决策标签、风险等级或预期收益结论之外。
