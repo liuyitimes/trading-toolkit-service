@@ -14,6 +14,7 @@
 - CORS 使用逗号分隔的允许来源；开发默认允许本地 Vite 地址。
 - 端点矩阵是 OpenSpec 的机器可验证投影；Web CI 读取同一文件。
 - Alembic 是生产结构演进入口；本地 SQLite 仍用于测试。
+- CI 与容器构建使用默认 Python 包索引，不依赖单一第三方镜像站，避免镜像站超时阻断发布。
 
 ## Risks / Trade-offs
 
