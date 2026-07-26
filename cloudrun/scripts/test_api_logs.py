@@ -3,9 +3,9 @@
 
 测试场景：
 1. 正常请求 → 日志被记录
-2. 空响应 → 不崩溃
-3. 超大响应 → 被截断
-4. 非 JSON 响应 → 原样记录
+2. 日志查询接口本身 → 不被记录
+3. 超大响应 → 不记录响应正文
+4. 非 JSON 响应 → 不记录响应正文
 5. api-logs 接口本身 → 不被记录
 6. api-logs 查询参数异常 → 防御性处理
 7. 日志列表上限 → 自动淘汰
@@ -14,7 +14,6 @@
 """
 import sys
 import os
-import json
 
 # 让脚本能 import app
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -89,9 +88,8 @@ def test_normal_request_recorded():
         assert_true(l['path'] == '/__test_ping__', 'path 正确')
         assert_true(l['status'] == 200, 'status = 200')
         assert_true(isinstance(l['duration'], (int, float)) and l['duration'] >= 0, 'duration 非负')
-        assert_true(isinstance(l['response_body'], str), 'response_body 是字符串')
-        assert_true('"ok"' in l['response_body'] or 'true' in l['response_body'], 'response_body 含正常内容')
-        assert_true(l.get('truncated') is False, 'truncated = False')
+        assert_true('response_body' not in l, '不记录响应正文')
+        assert_true('truncated' not in l, '不记录截断标记')
 
 
 def test_api_logs_not_recorded():
@@ -110,8 +108,8 @@ def test_api_logs_not_recorded():
     assert_true(len(logs) == 1, f'仅记录了 ping 这 1 条 (实际 {len(logs)})')
 
 
-def test_large_response_truncated():
-    print('\n=== 3. 超大响应应被截断 ===')
+def test_large_response_does_not_log_body():
+    print('\n=== 3. 超大响应不记录正文 ===')
     reset_logs()
     c = make_client()
     c.get('/__test_huge__')
@@ -121,13 +119,13 @@ def test_large_response_truncated():
     assert_true(len(logs) >= 1, '有日志')
     if logs:
         l = logs[0]
-        assert_true(l.get('truncated') is True, 'truncated = True')
-        assert_true('已截断' in (l['response_body'] or ''), 'response_body 含截断提示')
-        assert_true(len(l['response_body']) < 20000, 'response_body 被截断到合理大小')
+        assert_true(l['status'] == 200, 'status = 200')
+        assert_true('response_body' not in l, '不记录超大响应正文')
+        assert_true('truncated' not in l, '不记录截断标记')
 
 
-def test_non_json_response():
-    print('\n=== 4. 非 JSON 响应应原样记录 ===')
+def test_non_json_response_does_not_log_body():
+    print('\n=== 4. 非 JSON 响应不记录正文 ===')
     reset_logs()
     c = make_client()
     c.get('/__test_html__')
@@ -137,9 +135,8 @@ def test_non_json_response():
     assert_true(len(logs) >= 1, '有日志')
     if logs:
         l = logs[0]
-        assert_true(isinstance(l['response_body'], str), 'response_body 是字符串')
-        # HTML 文本被原样保留
-        assert_true('html' in l['response_body'].lower() or 'not json' in l['response_body'], 'HTML 内容被保留')
+        assert_true(l['status'] == 200, 'status = 200')
+        assert_true('response_body' not in l, '不记录 HTML 正文')
 
 
 def test_invalid_query_params():
@@ -201,8 +198,8 @@ if __name__ == '__main__':
     tests = [
         test_normal_request_recorded,
         test_api_logs_not_recorded,
-        test_large_response_truncated,
-        test_non_json_response,
+        test_large_response_does_not_log_body,
+        test_non_json_response_does_not_log_body,
         test_invalid_query_params,
         test_log_capacity_limit,
         test_clear_endpoint,
