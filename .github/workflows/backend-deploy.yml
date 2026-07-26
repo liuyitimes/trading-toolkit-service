@@ -18,7 +18,6 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r cloudrun/requirements-dev.txt
-          pip install -e "backtest[dev]"
       - name: Run service tests
         env:
           USE_MOCK: true
