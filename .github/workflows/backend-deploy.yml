@@ -27,13 +27,26 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     steps:
+      - name: Check deployment configuration
+        id: configuration
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          RENDER_HEALTHCHECK_URL: ${{ secrets.RENDER_HEALTHCHECK_URL }}
+        run: |
+          if test -n "$RENDER_DEPLOY_HOOK_URL" && test -n "$RENDER_HEALTHCHECK_URL"; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Trigger Render deployment
+        if: steps.configuration.outputs.configured == 'true'
         env:
           RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
         run: |
           test -n "$RENDER_DEPLOY_HOOK_URL"
           curl --fail --show-error --silent --request POST "$RENDER_DEPLOY_HOOK_URL"
       - name: Smoke check
+        if: steps.configuration.outputs.configured == 'true'
         env:
           RENDER_HEALTHCHECK_URL: ${{ secrets.RENDER_HEALTHCHECK_URL }}
         run: |
