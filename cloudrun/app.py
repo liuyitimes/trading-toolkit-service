@@ -8,8 +8,11 @@ import logging
 import os
 import time
 import traceback
+import json
 from functools import wraps
+from pathlib import Path
 
+import click
 from flask import Flask, request
 from flask_cors import CORS
 from datetime import datetime, timezone, timedelta
@@ -26,6 +29,7 @@ from services.cache import (
 from services.lof_arbitrage import get_arbitrage_prediction as _get_lof_arbitrage_prediction
 from services.lof_detail import get_lof_detail
 from services.hk_ipo import refresh_hk_ipo_cache
+import models.lof_premium  # noqa: F401，确保 SQLite 开发数据库创建 LOF 表
 from utils.response import api_response, api_error, ErrorCode
 from utils.limiting import limit
 from utils.logging import setup_logging
@@ -62,6 +66,46 @@ factory = create_default_factory()
 
 # 缓存管理器
 cache = get_cache_manager()
+
+
+@app.cli.command('lof-trading-calendar-import')
+@click.option('--file', 'calendar_file', type=click.Path(exists=True, path_type=Path), required=True)
+@click.option('--source', required=True, help='交易所官方日历来源名称')
+@click.option('--version', default=None, help='官方公告或文件版本')
+def lof_trading_calendar_import(calendar_file, source, version):
+    """导入官方确认的沪深共同交易日 JSON 文件。"""
+    from datetime import datetime
+    from services.lof_premium_persistence import import_trading_calendar
+
+    payload = json.loads(calendar_file.read_text(encoding='utf-8'))
+    raw_days = payload.get('trading_days', payload) if isinstance(payload, dict) else payload
+    days = [datetime.strptime(str(value), '%Y-%m-%d').date() for value in raw_days]
+    click.echo(json.dumps({'imported': import_trading_calendar(days, source=source, source_version=version)}, ensure_ascii=False))
+
+
+def _current_lof_codes():
+    from services.lof_fund import _fetch_em_lof_rows
+
+    return [str(row.get('f12')) for row in _fetch_em_lof_rows() if row.get('f12')]
+
+
+@app.cli.command('lof-premium-backfill')
+@click.option('--year', type=int, required=True)
+def lof_premium_backfill(year):
+    """回补当前有效 LOF 的指定自然年同日可比观测。"""
+    from services.lof_premium_persistence import backfill_year
+
+    if year != datetime.now(CST).year:
+        raise click.BadParameter('首次回补只允许当前自然年', param_hint='--year')
+    click.echo(json.dumps(backfill_year(_current_lof_codes(), year), ensure_ascii=False))
+
+
+@app.cli.command('lof-premium-capture')
+def lof_premium_capture():
+    """采集当日有效 LOF 的收盘后观测，由外部调度器调用。"""
+    from services.lof_premium_persistence import capture_day
+
+    click.echo(json.dumps(capture_day(_current_lof_codes()), ensure_ascii=False))
 
 logger.info(f'后端启动完成，主数据源: {factory._primary_name}，缓存后端: {cache.backend_type}')
 

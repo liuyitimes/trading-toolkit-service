@@ -1,0 +1,10 @@
+[Unit]
+Description=Trading Toolkit LOF 收盘后溢价观测采集
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/amos/github/trading-toolkit-service/cloudrun
+EnvironmentFile=/etc/trading-toolkit/service.env
+ExecStart=/usr/bin/python3 -m flask --app app lof-premium-capture

@@ -130,7 +130,7 @@ class LofExecutionRuleTest(unittest.TestCase):
         quote[81] = '1.0'
         parsed = _parse_row(row, quote, _resolve_execution_rule('161725', now), now)
         self.assertTrue(parsed['报价有效'])
-        self.assertEqual(parsed['净值日期'], '2026-07-10')
+        self.assertIsNone(parsed['净值日期'])
         self.assertEqual(parsed['溢价率'], 10.0)
         self.assertEqual(parsed['成交额'], 100000)
 

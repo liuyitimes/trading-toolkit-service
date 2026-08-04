@@ -463,7 +463,8 @@ def _parse_row(row, quote_values, rule, fetched_at):
         '估值': valuation,
         '溢价率': premium,
         '行情时间': quote_time,
-        '净值日期': _parse_iso(quote_time).date().isoformat() if quote_time else None,
+        # 腾讯行情没有可验证的单位净值发布日期，不能用行情时间伪造。
+        '净值日期': None,
         '净值来源': '腾讯财经基金行情（最新单位净值）',
         '报价有效': valid_quote,
         '申购状态': rule['subscription_status'],
@@ -547,14 +548,23 @@ def get_lof_list():
     for item in candidates:
         item['近5日平均成交额'] = _five_day_average_turnover(item['代码'])
 
-    # Persist only normalized valid observations; missing fields are never backfilled.
+    # 列表读取不得触发历史写入；观测由外部调度的 CLI 任务采集。
     try:
-        from services.lof_detail import record_observations
-        from services.normalizer import normalize_lof_list
+        from services.lof_premium_persistence import persistence_for_funds
 
-        record_observations(normalize_lof_list(result))
+        persistence = persistence_for_funds([item['代码'] for item in result], fetched_at.date())
+        for item in result:
+            item['溢价持续性'] = persistence.get(item['代码'])
     except Exception as exc:
-        logger.warning('[LOF] observation persistence failed: %s', exc)
+        logger.warning('[LOF] premium persistence read failed: %s', exc)
+        for item in result:
+            item['溢价持续性'] = {
+                'consecutive_positive_sessions': None,
+                'status': 'unavailable',
+                'as_of': None,
+                'history_started_on': None,
+                'reason': '连续正溢价历史暂不可用',
+            }
 
     return result
 

@@ -226,7 +226,7 @@ def build_lof_detail(current, history, holdings):
                 'account_specific': False,
             },
             'persistence': {
-                'consecutive_positive_sessions': _consecutive_positive_sessions(history),
+                **(current.get('premium_persistence') or {}),
                 'five_session': five_session,
                 'twenty_session': twenty_session,
             },
@@ -257,9 +257,8 @@ def build_lof_detail(current, history, holdings):
 
 
 def get_lof_detail(code):
-    """Fetch current LOF data, persist it when valid, and build a detail view."""
+    """读取当前 LOF 详情；历史观测只由外部采集任务写入。"""
     items = normalize_lof_list(get_lof_list())
-    record_observations(items)
     current = next((item for item in items if item['code'] == str(code)), None)
     if current is None:
         return None
