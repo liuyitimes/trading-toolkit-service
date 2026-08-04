@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 """分级缓存系统 — 根据数据类型和交易时段动态调整 TTL"""
 
+import hashlib
 import json
 import logging
 import os
 import threading
 import time
 from datetime import datetime, time as dt_time
+from pathlib import Path
 
 logger = logging.getLogger('trading_toolkit')
 
@@ -124,7 +126,38 @@ class CacheManager:
     def __init__(self):
         self._backend = None
         self._backend_type = 'memory'
+        self._snapshot_dir = Path(os.environ.get(
+            'CACHE_SNAPSHOT_DIR',
+            Path(__file__).resolve().parents[1] / 'runtime_cache',
+        ))
         self._init_backend()
+
+    def _snapshot_path(self, key: str) -> Path:
+        digest = hashlib.sha256(key.encode('utf-8')).hexdigest()
+        return self._snapshot_dir / f'{digest}.json'
+
+    def get_stale(self, key: str):
+        """读取不受 TTL 影响的上次成功快照，供请求路径快速降级。"""
+        try:
+            payload = json.loads(self._snapshot_path(key).read_text(encoding='utf-8'))
+            return payload.get('data') if isinstance(payload, dict) else None
+        except (OSError, TypeError, json.JSONDecodeError):
+            return None
+
+    def _write_snapshot(self, key: str, value) -> None:
+        if key.endswith(':_next_refresh'):
+            return
+        try:
+            self._snapshot_dir.mkdir(parents=True, exist_ok=True)
+            target = self._snapshot_path(key)
+            temporary = target.with_suffix('.tmp')
+            temporary.write_text(
+                json.dumps({'saved_at': time.time(), 'data': value}, ensure_ascii=False, default=str),
+                encoding='utf-8',
+            )
+            temporary.replace(target)
+        except (OSError, TypeError, ValueError):
+            logger.warning('[Cache] 无法写入本地快照: %s', key)
 
     def _init_backend(self):
         redis_url = os.environ.get('REDIS_URL', '').strip()
@@ -178,6 +211,7 @@ class CacheManager:
                 self._backend.set(key, value, ttl)
             else:
                 self._backend.set(key, serialized, ex=ttl)
+            self._write_snapshot(key, value)
         except Exception:
             pass
 

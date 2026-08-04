@@ -11,6 +11,7 @@ import traceback
 import json
 from functools import wraps
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 import click
 from flask import Flask, request
@@ -66,6 +67,21 @@ factory = create_default_factory()
 
 # 缓存管理器
 cache = get_cache_manager()
+
+_WARMING_FALLBACKS = {
+    'convertible_list': lambda kwargs: {
+        'total': 0, 'page': kwargs.get('page', 1),
+        'page_size': kwargs.get('page_size', 100), 'items': [],
+    },
+    'lof_list': lambda kwargs: [],
+    'lof_opportunities': lambda kwargs: {'premium': [], 'discount': []},
+    'lof_summary': lambda kwargs: {},
+    'hk_ipo_list': lambda kwargs: [],
+    'hk_ipo_upcoming': lambda kwargs: [],
+    'hk_ipo_summary': lambda kwargs: {},
+    'closed_end_list': lambda kwargs: [],
+    'closed_end_summary': lambda kwargs: {},
+}
 
 
 @app.cli.command('lof-trading-calendar-import')
@@ -198,6 +214,19 @@ def fetch_with_cache(data_type: str, method_name: str, force_refresh=False, use_
             _maybe_trigger_background_refresh(cache_key, _fetch, ttl, 0.7)
             return cached, 'cache', True
 
+        snapshot = cache.get_stale(cache_key)
+        if snapshot is not None:
+            cache.set(cache_key, snapshot, ttl)
+            from services.cache import _maybe_trigger_background_refresh
+            _maybe_trigger_background_refresh(cache_key, _fetch, ttl, 0.7)
+            return snapshot, 'local_snapshot', True
+
+        # 上游网络只由后台刷新承担，常规页面读取必须快速返回。
+        from services.cache import _maybe_trigger_background_refresh
+        _maybe_trigger_background_refresh(cache_key, _fetch, ttl, 0.7)
+        fallback = _WARMING_FALLBACKS.get(data_type)
+        return (fallback(kwargs) if fallback else {}, 'warming', False)
+
     # 普通模式：先查缓存，未命中则同步获取
     cached = cache.get(cache_key)
     if cached is not None:
@@ -218,26 +247,21 @@ def fetch_with_cache(data_type: str, method_name: str, force_refresh=False, use_
 def market_overview():
     """综合市场概览"""
     try:
-        result = {}
-
-        # 可转债温度
-        data, source, cached = fetch_with_cache(
-            'convertible_temperature', 'get_convertible_temperature')
-        result['convertible_bond'] = data or {}
-
-        # LOF 概览
-        data, _, _ = fetch_with_cache('lof_summary', 'get_lof_summary')
-        result['lof_fund'] = data or {}
-
-        # 市场情绪
-        data, _, _ = fetch_with_cache('market_sentiment', 'get_market_sentiment')
-        result['market_sentiment'] = data or {}
-
-        # 资金流向
-        data, _, _ = fetch_with_cache('fund_flow', 'get_fund_flow')
-        result['fund_flow'] = data or {}
-
-        return api_response(result, source=source, cached=cached)
+        requests = {
+            'convertible_bond': ('convertible_temperature', 'get_convertible_temperature'),
+            'lof_fund': ('lof_summary', 'get_lof_summary'),
+            'market_sentiment': ('market_sentiment', 'get_market_sentiment'),
+            'fund_flow': ('fund_flow', 'get_fund_flow'),
+        }
+        with ThreadPoolExecutor(max_workers=len(requests)) as executor:
+            futures = {
+                key: executor.submit(fetch_with_cache, data_type, method_name)
+                for key, (data_type, method_name) in requests.items()
+            }
+            responses = {key: future.result() for key, future in futures.items()}
+        result = {key: data or {} for key, (data, _, _) in responses.items()}
+        sources = {source for _, source, _ in responses.values()}
+        return api_response(result, source=','.join(sorted(sources)), cached=all(cached for _, _, cached in responses.values()))
     except Exception as e:
         logger.error(f'市场概览异常: {e}')
         return api_error(*ErrorCode.DATA_SOURCE_ERROR)
@@ -1003,6 +1027,7 @@ def start_cache_warmup():
                 ('convertible_temperature', lambda: factory.get_with_fallback('get_convertible_temperature')[0]),
                 ('convertible_signals', lambda: factory.get_with_fallback('get_convertible_signals')[0]),
                 ('fund_flow', lambda: factory.get_with_fallback('get_fund_flow')[0]),
+                ('lof_list', lambda: factory.get_with_fallback('get_lof_list')[0]),
                 ('lof_summary', lambda: factory.get_with_fallback('get_lof_summary')[0]),
                 ('convertible_list', lambda: factory.get_with_fallback('get_convertible_list', page=1, page_size=50)[0]),
             ]
@@ -1015,8 +1040,13 @@ def start_cache_warmup():
     logger.info('缓存预热已启动（后台执行）')
 
 
+def serve():
+    """生产和本地统一入口：先后台预热，再接受 HTTP 请求。"""
+    start_cache_warmup()
+    app.run(host='0.0.0.0', port=8080, debug=False, use_reloader=False)
+
+
 # ==================== 启动 ====================
 
 if __name__ == '__main__':
-    start_cache_warmup()
-    app.run(host='0.0.0.0', port=8080, debug=True)
+    serve()
