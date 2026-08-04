@@ -101,8 +101,32 @@ def _reconcile_row(current, incoming, source_kind):
     return current, result, incoming_priority
 
 
-def _public_row(row):
-    return {key: value for key, value in row.items() if not key.startswith('_placement_')}
+def _placement_observation_state(registration_date, now):
+    value = str(registration_date or '')[:10]
+    try:
+        record_date = datetime.strptime(value, '%Y-%m-%d').date()
+    except ValueError:
+        return 'registration_unknown'
+    return 'expired' if record_date < now.date() else 'eligible'
+
+
+def _is_late_stage_observation_row(row):
+    if row.get('registration_date') or row.get('apply_date'):
+        return True
+    status = str(row.get('status') or row.get('progress') or '')
+    if status in ('上市委通过', '同意注册', '申购中', '待上市'):
+        return True
+    progress_full = str(row.get('progress_full') or '')
+    return '上市委通过' in progress_full or '同意注册' in progress_full
+
+
+def _public_row(row, now=None):
+    public = {key: value for key, value in row.items() if not key.startswith('_placement_')}
+    if 'placement_observation_state' not in public:
+        public['placement_observation_state'] = _placement_observation_state(
+            public.get('registration_date'), now or _now()
+        )
+    return public
 
 
 def _refresh_interval(rows, now):
@@ -131,7 +155,7 @@ def _serialize_snapshot(snapshot, now):
     interval = _refresh_interval([row], now)
     data_as_of = snapshot.data_as_of or snapshot.updated_at or now
     stale = snapshot.freshness_state == 'stale' or now - data_as_of > interval
-    return _public_row(row), stale, data_as_of
+    return _public_row(row, now), stale, data_as_of
 
 
 def get_pending_snapshot_payload():
@@ -152,7 +176,7 @@ def get_pending_snapshot_payload():
         review_required = False
         for snapshot in snapshots:
             row, row_stale, data_as_of = _serialize_snapshot(snapshot, now)
-            if not row:
+            if not row or not _is_late_stage_observation_row(row):
                 continue
             rows.append(row)
             stale = stale or row_stale

@@ -65,9 +65,35 @@ class PlacementSnapshotPolicyTest(unittest.TestCase):
         self.assertEqual(priority, placement_snapshot.SOURCE_PRIORITY['cninfo'])
         self.assertEqual(merged['registration_date'], '2026-07-24')
 
-    def test_public_row_hides_internal_reconciliation_state(self):
-        row = placement_snapshot._public_row({'stock_code': '001202', '_placement_issuer_terms_priority': 400})
-        self.assertEqual(row, {'stock_code': '001202'})
+    def test_public_row_hides_internal_state_and_marks_legacy_expiry(self):
+        row = placement_snapshot._public_row(
+            {
+                'stock_code': '001202',
+                'registration_date': '2026-07-23',
+                '_placement_issuer_terms_priority': 400,
+            },
+            datetime(2026, 7, 24, 9, 0),
+        )
+        self.assertEqual(
+            row,
+            {
+                'stock_code': '001202',
+                'registration_date': '2026-07-23',
+                'placement_observation_state': 'expired',
+            },
+        )
+
+    def test_legacy_early_stage_snapshot_is_excluded_from_observation(self):
+        self.assertFalse(
+            placement_snapshot._is_late_stage_observation_row(
+                {'status': '交易所受理', 'progress_full': '2026-06-01 交易所受理'}
+            )
+        )
+        self.assertTrue(
+            placement_snapshot._is_late_stage_observation_row(
+                {'status': '同意注册', 'progress_full': '2026-06-17 同意注册'}
+            )
+        )
 
     def test_direct_pending_collector_is_recorded_as_eastmoney(self):
         self.assertEqual(placement_snapshot._source_kind({}, 'direct'), 'eastmoney')
