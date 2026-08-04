@@ -9,6 +9,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from services.convertible_bond import (
     _build_progress_full,
     _calc_cash_ratio,
+    _get_placement_observation_state,
+    _is_late_stage_observation,
     _is_pending_placement_visible,
     _load_cached_ma20,
     _timeline_needs_refresh,
@@ -16,13 +18,26 @@ from services.convertible_bond import (
 
 
 class PendingPlacementVisibilityTest(unittest.TestCase):
-    def test_jiangshan_stays_visible_through_its_registration_date(self):
-        self.assertTrue(_is_pending_placement_visible('2026-07-13', datetime(2026, 7, 12, 12, 0)))
-        self.assertTrue(_is_pending_placement_visible('2026-07-13', datetime(2026, 7, 13, 15, 0)))
-        self.assertFalse(_is_pending_placement_visible('2026-07-13', datetime(2026, 7, 14, 9, 0)))
+    def test_registration_date_state_keeps_expired_items_visible(self):
+        now = datetime(2026, 7, 14, 9, 0)
+        self.assertEqual(_get_placement_observation_state('2026-07-13', now), 'expired')
+        self.assertEqual(_get_placement_observation_state('2026-07-14', now), 'eligible')
+        self.assertEqual(_get_placement_observation_state('', now), 'registration_unknown')
+        self.assertTrue(_is_pending_placement_visible('2026-07-13', now))
 
     def test_missing_registration_date_stays_visible(self):
         self.assertTrue(_is_pending_placement_visible('', datetime(2026, 7, 12, 12, 0)))
+
+    def test_only_late_stage_or_follow_up_records_enter_observation(self):
+        self.assertTrue(_is_late_stage_observation(
+            {'SECURITY_START_DATE': '2026-07-13'}, {}
+        ))
+        self.assertTrue(_is_late_stage_observation(
+            {}, {'stage_dates': {'同意注册': '2026-06-17'}}
+        ))
+        self.assertFalse(_is_late_stage_observation(
+            {}, {'stage_dates': {'股东大会批准': '2026-05-09'}}
+        ))
 
     def test_cash_ratio_uses_allocation_and_stock_price(self):
         self.assertEqual(_calc_cash_ratio(0.7848, 5.25), 14.95)

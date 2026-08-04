@@ -768,22 +768,30 @@ def get_pending_bonds():
 
 
 def _is_pending_placement_visible(registration_date, now=None):
-    """Return whether buying the stock can still qualify for priority placement.
+    """保持所有未上市观察项可见，登记日只决定状态和排序。"""
+    return True
 
-    Missing registration dates are retained because the upstream source has not
-    announced a definitive deadline yet. The stock remains eligible through
-    the close of its registration date.
-    """
+
+def _get_placement_observation_state(registration_date, now=None):
+    """返回配售观察状态，不把登记日已过的标的从列表中删除。"""
     if not registration_date:
-        return True
-
+        return 'registration_unknown'
     try:
         record_date = datetime.strptime(str(registration_date)[:10], '%Y-%m-%d').date()
     except (TypeError, ValueError):
-        return True
-
+        return 'registration_unknown'
     current = now or datetime.now(_CHINA_TZ)
-    return current.date() <= record_date
+    return 'expired' if record_date < current.date() else 'eligible'
+
+
+def _is_late_stage_observation(bond, timeline):
+    """判断未上市标的是否已进入末段审批或后续配售节点。"""
+    registration_date = _format_date(bond.get('SECURITY_START_DATE'))
+    apply_date = _format_date(bond.get('PUBLIC_START_DATE'))
+    if registration_date or apply_date:
+        return True
+    stage_dates = (timeline or {}).get('stage_dates', {})
+    return bool(stage_dates.get('上市委通过') or stage_dates.get('同意注册'))
 
 
 def _enrich_with_local_placement(rows):
@@ -846,12 +854,17 @@ def _fetch_em_pending_bonds():
         logger.warning(f'[EmPending] 获取东财可转债数据失败: {e}')
         return []
 
-    # 2. 筛选未上市且股权登记日尚未结束的债券。
+    # 2. 筛选未上市且已进入末段审批或后续配售节点的债券。
     pending = [b for b in all_bonds if not b.get('LISTING_DATE')]
     now = datetime.now(_CHINA_TZ)
+    timeline_by_stock = _load_timeline_cache(
+        [str(b.get('CONVERT_STOCK_CODE', '')) for b in pending]
+    )
     pending = [
         b for b in pending
-        if _is_pending_placement_visible(_format_date(b.get('SECURITY_START_DATE')), now)
+        if _is_late_stage_observation(
+            b, timeline_by_stock.get(str(b.get('CONVERT_STOCK_CODE', '')), {})
+        )
     ]
     if not pending:
         return []
@@ -869,12 +882,7 @@ def _fetch_em_pending_bonds():
     # 避免上游 K 线重试阻塞配售列表首屏。
     ma20_map = _load_cached_ma20(stock_codes)
 
-    # 6. 从持久化缓存读取历史审批节点。列表请求不再同步翻公告。
-    timeline_by_stock = _load_timeline_cache(
-        [str(b.get('CONVERT_STOCK_CODE', '')) for b in pending]
-    )
-
-    # 7. 组装结果
+    # 6. 组装结果
     result = []
     for bond in pending:
         stock_code = str(bond.get('CONVERT_STOCK_CODE', ''))
@@ -903,6 +911,7 @@ def _fetch_em_pending_bonds():
         sec_start = bond.get('SECURITY_START_DATE', '')
         apply_date = _format_date(pub_start)
         registration_date = _format_date(sec_start)
+        observation_state = _get_placement_observation_state(registration_date, now)
 
         # 申购代码
         apply_code = str(bond.get('CORRECODE', '') or '')
@@ -975,6 +984,7 @@ def _fetch_em_pending_bonds():
             'per_share_allocation': per_share_alloc,
             'shares_for_10_lots': shares_for_10_lots,
             'registration_date': registration_date,
+            'placement_observation_state': observation_state,
             'online_issue_size': 0,
             'win_rate': win_rate,
             'apply_date': apply_date,
