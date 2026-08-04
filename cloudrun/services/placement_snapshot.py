@@ -21,6 +21,7 @@ _refresh_running = False
 _scheduler_lock = threading.Lock()
 _scheduler_running = False
 _last_cleanup_date = None
+_ACTIVE_JOB_TIMEOUT = timedelta(minutes=30)
 
 ISSUER_TERM_FIELDS = {
     'registration_date', 'apply_date', 'per_share_allocation', 'issue_size',
@@ -380,6 +381,12 @@ def _record_job(status, job_id, error=None):
     return None
 
 
+def _is_orphaned_active_job(job, now):
+    """服务重启后没有工作线程的旧运行任务不得永久阻塞刷新。"""
+    started_at = job.started_at or job.requested_at
+    return not started_at or now - started_at > _ACTIVE_JOB_TIMEOUT
+
+
 def _refresh(fetcher, job_id):
     global _refresh_running
     try:
@@ -414,10 +421,15 @@ def schedule_pending_snapshot_refresh(fetcher):
             active = (
                 db.query(PlacementRefreshJob)
                 .filter(PlacementRefreshJob.scope == 'pending', PlacementRefreshJob.status.in_(['queued', 'running', 'retrying']))
+                .order_by(PlacementRefreshJob.requested_at.desc())
                 .first()
             )
             if active:
-                return active.id
+                if not _is_orphaned_active_job(active, _now()):
+                    return active.id
+                active.status = 'failed'
+                active.completed_at = _now()
+                active.last_error = '刷新任务超时，已在服务启动后重新排队。'
             job = PlacementRefreshJob(scope='pending', status='queued')
             db.add(job)
             db.flush()

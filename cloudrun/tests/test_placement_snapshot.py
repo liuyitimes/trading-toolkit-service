@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import sys
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -110,3 +111,19 @@ class PlacementSnapshotPolicyTest(unittest.TestCase):
             placement_snapshot.start_pending_snapshot_scheduler(lambda: [])
         schedule.assert_called_once()
         self.assertEqual(schedule_next.call_args.args[1], 300)
+
+    def test_old_running_job_is_orphaned_after_service_restart(self):
+        job = SimpleNamespace(
+            requested_at=datetime(2026, 8, 5, 9, 0),
+            started_at=datetime(2026, 8, 5, 9, 1),
+        )
+        self.assertTrue(
+            placement_snapshot._is_orphaned_active_job(
+                job, datetime(2026, 8, 5, 9, 32)
+            )
+        )
+        self.assertFalse(
+            placement_snapshot._is_orphaned_active_job(
+                job, datetime(2026, 8, 5, 9, 30)
+            )
+        )
