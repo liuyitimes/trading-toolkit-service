@@ -10,6 +10,8 @@ import time
 from datetime import datetime, time as dt_time
 from pathlib import Path
 
+from services.market_data_validation import is_complete_convertible_list_payload
+
 logger = logging.getLogger('trading_toolkit')
 
 # TTL 配置（秒）
@@ -136,11 +138,19 @@ class CacheManager:
         digest = hashlib.sha256(key.encode('utf-8')).hexdigest()
         return self._snapshot_dir / f'{digest}.json'
 
+    @staticmethod
+    def _is_acceptable_value(key: str, value) -> bool:
+        return not key.startswith('convertible:list:data') or is_complete_convertible_list_payload(value)
+
     def get_stale(self, key: str):
         """读取不受 TTL 影响的上次成功快照，供请求路径快速降级。"""
         try:
             payload = json.loads(self._snapshot_path(key).read_text(encoding='utf-8'))
-            return payload.get('data') if isinstance(payload, dict) else None
+            value = payload.get('data') if isinstance(payload, dict) else None
+            if not self._is_acceptable_value(key, value):
+                logger.warning('[Cache] 忽略不完整的可转债列表快照: %s', key)
+                return None
+            return value
         except (OSError, TypeError, json.JSONDecodeError):
             return None
 
@@ -198,13 +208,20 @@ class CacheManager:
             # redis 返回的可能是 bytes 或 str
             if isinstance(raw, bytes):
                 raw = raw.decode('utf-8')
-            return json.loads(raw)
+            value = json.loads(raw)
         except (json.JSONDecodeError, TypeError):
-            return raw
+            value = raw
         except Exception:
             return None
+        if not self._is_acceptable_value(key, value):
+            logger.warning('[Cache] 忽略不完整的可转债列表缓存: %s', key)
+            return None
+        return value
 
     def set(self, key: str, value, ttl: int = 300):
+        if not self._is_acceptable_value(key, value):
+            logger.warning('[Cache] 拒绝不完整的可转债列表快照: %s', key)
+            return
         try:
             serialized = json.dumps(value, ensure_ascii=False, default=str)
             if self._backend_type == 'memory':
