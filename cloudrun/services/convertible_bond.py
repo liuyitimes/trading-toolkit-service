@@ -64,6 +64,12 @@ _KLINE_REFRESH_LOCK = threading.Lock()
 _KLINE_REFRESHING = set()
 _MERGED_BOND_CACHE = {'expires_at': 0, 'df': None}
 _MERGED_BOND_CACHE_TTL = 60
+_EM_BONDS_CACHE = {'expires_at': 0, 'df': None}
+_EM_BONDS_CACHE_TTL = 60
+_EM_BOND_QUOTE_URL = 'https://push2delay.eastmoney.com/api/qt/clist/get'
+_EM_BOND_BOARD = 'b:MK0354'
+_EM_TURNOVER_CACHE = {'expires_at': 0, 'map': None}
+_EM_TURNOVER_CACHE_TTL = 60
 
 # A 股优先配售以股权登记日收市为界，登记日当天仍可参与。
 _CHINA_TZ = ZoneInfo('Asia/Shanghai')
@@ -547,6 +553,11 @@ def _get_em_bonds():
 
     替代 ak.bond_zh_cov()，直连东财数据中心 API，走 em_get 限流。
     """
+    now_mono = time.monotonic()
+    cached_df = _EM_BONDS_CACHE.get('df')
+    if cached_df is not None and _EM_BONDS_CACHE.get('expires_at', 0) > now_mono:
+        return cached_df.copy()
+
     params = {
         "reportName": "RPT_BOND_CB_LIST",
         "columns": "ALL",
@@ -577,10 +588,64 @@ def _get_em_bonds():
                 break
             rows.extend(page_rows)
         df = pd.DataFrame(rows)
+        _EM_BONDS_CACHE['df'] = df.copy()
+        _EM_BONDS_CACHE['expires_at'] = now_mono + _EM_BONDS_CACHE_TTL
         return df if not df.empty else None
     except Exception as e:
         logger.warning(f'[EmBond] 获取东方财富可转债数据失败: {e}')
         return None
+
+
+def _fetch_em_bond_turnover_map():
+    """东财可转债板块行情：债券代码 -> 换手率（%），带短期缓存。"""
+    now_mono = time.monotonic()
+    cached = _EM_TURNOVER_CACHE.get('map')
+    if cached is not None and _EM_TURNOVER_CACHE.get('expires_at', 0) > now_mono:
+        return cached
+
+    result = {}
+    try:
+        page = 1
+        collected = 0
+        while page <= 5:
+            resp = em_get(
+                _EM_BOND_QUOTE_URL,
+                params={
+                    'pn': page,
+                    'pz': 100,
+                    'po': 1,
+                    'np': 1,
+                    'fltt': 2,
+                    'invt': 2,
+                    'fid': 'f3',
+                    'fs': _EM_BOND_BOARD,
+                    'fields': 'f12,f8',
+                },
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                break
+            data = resp.json().get('data') or {}
+            diff = data.get('diff') or []
+            if not diff:
+                break
+            for item in diff:
+                code = str(item.get('f12') or '')
+                raw = item.get('f8')
+                if code:
+                    result[code] = (
+                        safe_float(raw) if raw not in (None, '', '-') else None
+                    )
+            collected += len(diff)
+            total = int(data.get('total') or 0)
+            if collected >= total or len(diff) < 100:
+                break
+            page += 1
+        _EM_TURNOVER_CACHE['map'] = result
+        _EM_TURNOVER_CACHE['expires_at'] = now_mono + _EM_TURNOVER_CACHE_TTL
+    except Exception as exc:
+        logger.warning(f'[EmBond] 换手率行情获取失败: {exc}')
+    return result
 
 
 # ==================== 数据合并 ====================
@@ -829,15 +894,8 @@ def _series_from_date(series, start_date):
     return [row for row in series or [] if row.get('date', '') >= start and row.get('close', 0) > 0]
 
 
-def _first_series_row_in_month(series, month_prefix):
-    for row in series or []:
-        if str(row.get('date', '')).startswith(month_prefix) and row.get('close', 0) > 0:
-            return row
-    return None
-
-
 def get_convertible_new_listed():
-    """获取今年上市新债表现，返回英文字段的 dict 列表。"""
+    """获取今年上市新债列表：上市以来涨幅、剩余规模与换手率。"""
     try:
         df = _merge_bond_data()
         if df is None or df.empty:
@@ -845,10 +903,9 @@ def get_convertible_new_listed():
 
         today = datetime.now(_CHINA_TZ).date()
         current_year = today.year
-        month_prefix = today.strftime('%Y-%m')
-        month_start = f'{month_prefix}-01'
         rows = []
         missing_kline_codes = []
+        turnover_map = _fetch_em_bond_turnover_map()
 
         for _, row in df.iterrows():
             list_date = _format_date(row.get('list_date', ''))
@@ -875,28 +932,6 @@ def get_convertible_new_listed():
                 if list_row and latest_price else None
             )
 
-            month_row = None
-            if list_date <= month_start:
-                month_row = _first_series_row_in_month(series, month_prefix)
-            month_gain = (
-                _calc_gain_pct(month_row.get('close'), latest_price)
-                if month_row and latest_price else None
-            )
-
-            three_day_row = None
-            if listed_series:
-                three_day_row = listed_series[min(len(listed_series), 3) - 1]
-            elif parsed_list_date.date() == today and realtime_price > 0:
-                three_day_row = {'date': list_date, 'close': realtime_price}
-            three_day_gain = (
-                _calc_gain_pct(100, three_day_row.get('close'))
-                if three_day_row else None
-            )
-            three_day_stage = (
-                min(len(listed_series), 3)
-                if listed_series else 1 if three_day_row else 0
-            )
-
             rows.append({
                 'bond_code': bond_code,
                 'bond_name': str(row.get('bond_name', '')),
@@ -908,15 +943,11 @@ def get_convertible_new_listed():
                 'latest_close': latest_price,
                 'latest_trade_date': latest_trade_date,
                 'listing_close': list_row.get('close') if list_row else None,
-                'month_base_close': month_row.get('close') if month_row else None,
-                'three_day_price': three_day_row.get('close') if three_day_row else None,
-                'three_day_price_date': three_day_row.get('date') if three_day_row else '',
-                'three_day_stage': three_day_stage,
                 'gain_since_listing': listing_gain,
-                'month_gain': month_gain,
-                'three_day_gain': three_day_gain,
                 'change_pct': safe_float(row.get('change_pct', 0)),
                 'premium_rate': safe_float(row.get('premium_rate', 0)),
+                'issue_size': safe_float(row.get('issue_size', 0)) or None,
+                'turnover_rate': turnover_map.get(bond_code),
             })
 
         _schedule_kline_refresh_many(
@@ -927,7 +958,7 @@ def get_convertible_new_listed():
         rows.sort(
             key=lambda item: (
                 item['list_date'] or '',
-                abs(item['three_day_gain']) if item['three_day_gain'] is not None else -999,
+                item['change_pct'] if item['change_pct'] is not None else -999,
             ),
             reverse=True,
         )

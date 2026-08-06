@@ -15,6 +15,7 @@ from services.lof_premium_persistence import (
     compute_premium_persistence_batch,
     import_calendar_year,
     is_trading_day,
+    latest_trading_day,
     latest_nav_dates,
     run_backfill,
     run_daily_capture,
@@ -33,6 +34,12 @@ def _session():
 
 def _seed_calendar(db):
     return import_calendar_year(db, 2026)
+
+
+def _last_trading_days(db, count):
+    latest = latest_trading_day(db)
+    days = trading_days_between(db, date(latest.year, 1, 1), latest)
+    return days[-count:]
 
 
 class TradingCalendarTest(unittest.TestCase):
@@ -153,8 +160,11 @@ class PersistenceSemanticsTest(unittest.TestCase):
     def test_complete_zero_when_latest_premium_is_not_positive(self):
         db = _session()
         _seed_calendar(db)
-        self._seed_observations(db, {date(2026, 8, 6): -1.0})
-        result = compute_premium_persistence_batch(db, ['161725'])['161725']
+        as_of = _last_trading_days(db, 1)[-1]
+        self._seed_observations(db, {as_of: -1.0})
+        result = compute_premium_persistence_batch(
+            db, ['161725'], as_of=as_of
+        )['161725']
         self.assertEqual(result['status'], 'complete')
         self.assertEqual(result['consecutive_positive_sessions'], 0)
         self.assertIsNone(result['reason'])
@@ -162,16 +172,19 @@ class PersistenceSemanticsTest(unittest.TestCase):
     def test_complete_count_stops_at_non_positive_day(self):
         db = _session()
         _seed_calendar(db)
+        days = _last_trading_days(db, 4)
         self._seed_observations(
             db,
             {
-                date(2026, 8, 6): 1.0,
-                date(2026, 8, 5): 1.0,
-                date(2026, 8, 4): 1.0,
-                date(2026, 8, 3): -0.5,
+                days[3]: 1.0,
+                days[2]: 1.0,
+                days[1]: 1.0,
+                days[0]: -0.5,
             },
         )
-        result = compute_premium_persistence_batch(db, ['161725'])['161725']
+        result = compute_premium_persistence_batch(
+            db, ['161725'], as_of=days[3]
+        )['161725']
         self.assertEqual(result['status'], 'complete')
         self.assertEqual(result['consecutive_positive_sessions'], 3)
 
@@ -199,25 +212,31 @@ class PersistenceSemanticsTest(unittest.TestCase):
     def test_partial_with_gap_reason(self):
         db = _session()
         _seed_calendar(db)
+        days = _last_trading_days(db, 5)
         self._seed_observations(
             db,
             {
-                date(2026, 8, 6): 1.0,
-                date(2026, 8, 5): 1.0,
-                # 8-04 缺失形成历史缺口
-                date(2026, 8, 3): 1.0,
+                days[4]: 1.0,
+                days[3]: 1.0,
+                # days[2] 缺失形成历史缺口
+                days[1]: 1.0,
             },
         )
-        result = compute_premium_persistence_batch(db, ['161725'])['161725']
+        result = compute_premium_persistence_batch(
+            db, ['161725'], as_of=days[4]
+        )['161725']
         self.assertEqual(result['status'], 'partial')
         self.assertEqual(result['consecutive_positive_sessions'], 2)
-        self.assertIn('2026-08-04', result['reason'])
+        self.assertIn(days[2].isoformat(), result['reason'])
 
     def test_unavailable_when_no_observation_on_latest_trading_day(self):
         db = _session()
         _seed_calendar(db)
-        self._seed_observations(db, {date(2026, 8, 5): 1.0})
-        result = compute_premium_persistence_batch(db, ['161725'])['161725']
+        days = _last_trading_days(db, 2)
+        self._seed_observations(db, {days[0]: 1.0})
+        result = compute_premium_persistence_batch(
+            db, ['161725'], as_of=days[1]
+        )['161725']
         self.assertEqual(result['status'], 'unavailable')
         self.assertIsNone(result['consecutive_positive_sessions'])
         self.assertIn('无同日可比观测', result['reason'])
@@ -348,7 +367,11 @@ class LofListIntegrationTest(unittest.TestCase):
     def test_get_lof_list_attaches_premium_persistence_and_real_nav_date(self):
         db = _session()
         _seed_calendar(db)
-        for day in (date(2026, 8, 5), date(2026, 8, 6)):
+        days = _last_trading_days(db, 3)
+        latest_day = days[-1]
+        prev_day = days[-2]
+        gap_day = days[-3]
+        for day in (prev_day, latest_day):
             upsert_observation(
                 db,
                 '161725',
@@ -395,10 +418,10 @@ class LofListIntegrationTest(unittest.TestCase):
 
         self.assertEqual(len(rows), 1)
         row = rows[0]
-        self.assertEqual(row['净值日期'], '2026-08-06')
+        self.assertEqual(row['净值日期'], latest_day.isoformat())
         self.assertEqual(row['premium_persistence']['status'], 'partial')
         self.assertEqual(row['premium_persistence']['consecutive_positive_sessions'], 2)
-        self.assertIn('2026-08-04', row['premium_persistence']['reason'])
+        self.assertIn(gap_day.isoformat(), row['premium_persistence']['reason'])
 
 
 if __name__ == '__main__':

@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from services.convertible_bond import (
     _build_progress_full,
     _calc_cash_ratio,
+    _fetch_em_bond_turnover_map,
     _fetch_kline_series,
     _fetch_em_pending_bonds,
     _get_placement_observation_state,
@@ -165,7 +166,7 @@ class PendingPlacementVisibilityTest(unittest.TestCase):
         self.assertEqual(rows[0]['expected_profit'], None)
         self.assertEqual(rows[0]['safety_pad'], None)
 
-    def test_new_listed_uses_current_year_and_progressive_three_day_gain(self):
+    def test_new_listed_returns_listing_gain_issue_size_and_turnover(self):
         class FixedDatetime(datetime):
             @classmethod
             def now(cls, tz=None):
@@ -183,6 +184,7 @@ class PendingPlacementVisibilityTest(unittest.TestCase):
                     'price': 128,
                     'change_pct': 1.1,
                     'premium_rate': 20,
+                    'issue_size': 5.0,
                 },
                 {
                     'bond_code': '113999',
@@ -208,6 +210,10 @@ class PendingPlacementVisibilityTest(unittest.TestCase):
             patch('services.convertible_bond.datetime', FixedDatetime),
             patch('services.convertible_bond._merge_bond_data', return_value=bonds),
             patch('services.convertible_bond._read_cached_kline_series', side_effect=fake_kline),
+            patch(
+                'services.convertible_bond._fetch_em_bond_turnover_map',
+                return_value={'123456': 12.34},
+            ),
             patch('services.convertible_bond._schedule_kline_refresh_many'),
         ):
             rows = get_convertible_new_listed()
@@ -216,7 +222,31 @@ class PendingPlacementVisibilityTest(unittest.TestCase):
         self.assertEqual(rows[0]['bond_code'], '123456')
         self.assertEqual(rows[0]['listing_close'], 121)
         self.assertEqual(rows[0]['latest_close'], 125)
-        self.assertEqual(rows[0]['three_day_stage'], 2)
-        self.assertEqual(rows[0]['three_day_price'], 125)
-        self.assertEqual(rows[0]['three_day_gain'], 25.0)
         self.assertEqual(rows[0]['gain_since_listing'], 3.31)
+        self.assertEqual(rows[0]['issue_size'], 5.0)
+        self.assertEqual(rows[0]['turnover_rate'], 12.34)
+        self.assertNotIn('month_gain', rows[0])
+        self.assertNotIn('three_day_gain', rows[0])
+
+    def test_turnover_map_paginates_beyond_first_page_cap(self):
+        class Response:
+            def __init__(self, page):
+                self.status_code = 200
+                self._page = page
+
+            def json(self):
+                if self._page == 1:
+                    diff = [{'f12': f'11{i:04d}', 'f8': i} for i in range(100)]
+                else:
+                    diff = [{'f12': f'12{i:04d}', 'f8': i} for i in range(50)]
+                return {'data': {'total': 150, 'diff': diff}}
+
+        with patch(
+            'services.convertible_bond.em_get',
+            side_effect=[Response(1), Response(2)],
+        ):
+            result = _fetch_em_bond_turnover_map()
+
+        self.assertEqual(len(result), 150)
+        self.assertEqual(result['110000'], 0.0)
+        self.assertEqual(result['120049'], 49.0)
