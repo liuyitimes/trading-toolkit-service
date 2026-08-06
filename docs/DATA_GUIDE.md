@@ -63,14 +63,14 @@
 | `cash_ratio` | `cashRatio` | 百元含权 | 每投入 100 元正股市值可获配的可转债面额。 |
 | `expected_profit` | `expectedProfit` / `_expectedProfitRaw` | 预估收益 | 基于当前预期上市溢价假设的测算值，不是承诺收益。 |
 | `safety_pad` | `safetyPad` / `_safetyPadRaw` | 安全垫 | 预估收益相对持仓成本的缓冲比例。 |
-| `registration_close_price` | `registrationClosePrice` / `_registrationClosePriceRaw` | 股权登记日收盘价 | 使用正股日 K 线中股权登记日当天收盘价；缺失时为 `null`，不得用当前价替代。 |
-| `post_registration_close_price` | `postRegistrationClosePrice` / `_postRegistrationClosePriceRaw` | 登记日后收尾价 | 使用股权登记日之后第一个可验证 A 股交易日收盘价；缺失时为 `null`。 |
+  | `registration_close_price` | `registrationClosePrice` / `_registrationClosePriceRaw` | 股权登记日收盘价 | 使用正股日 K 线中股权登记日当天收盘价；缺失时为 `null`，不得用当前价替代。 |
+  | `post_registration_close_price` | `postRegistrationClosePrice` / `_postRegistrationClosePriceRaw` | 登记日后收尾价 | 使用股权登记日之后第一个可验证 A 股交易日收盘价；缺失时为 `null`。 |
 | `strategy_score` | `score` | 配债评分 | 供排序和比较使用的综合分。 |
 | `strategy_rating` | `rating` | 配债评级 | 例如“推荐”“可关注”“谨慎”。 |
 
 `cash_ratio` 只表示百元含权。`stock_cash_ratio` 是“正股总市值 / 转债发行规模”的策略评分指标，不能替代或展示为百元含权。完整计算口径见 [可转债抢权配售字段](domain/convertible-placement.md)。
 
-配债参与后总收益由 Web 基于历史事实和用户选择的预期上市溢价率派生：
+  配债参与后总收益由 Web 基于历史事实和用户选择的预期上市溢价率派生：
 
 ```text
 正股段收益 = (登记日后收尾价 - 股权登记日收盘价) × 获配 1,000 元面值所需的实际正股股数

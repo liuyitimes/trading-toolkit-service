@@ -289,15 +289,26 @@ def convertible_detail(code):
 @app.route('/api/v1/convertible/pending')
 @limit(30)
 def convertible_pending():
-    """待发/配售可转债列表"""
+    """待发/配售可转债列表：只读本地快照，刷新始终在后台进行。"""
+    from services.placement_snapshot import (
+        get_pending_snapshot_payload,
+        schedule_pending_snapshot_refresh,
+        snapshot_needs_refresh,
+    )
+
+    payload = get_pending_snapshot_payload()
     force = request.args.get('refresh', '').lower() == 'true'
-    data, source, cached = fetch_with_cache(
-        'convertible_pending', 'get_convertible_pending', force_refresh=force)
-    if data is None:
-        return api_response([], source='none', cached=False)
-    from services.convertible_bond import schedule_pending_enrichment
-    schedule_pending_enrichment(data)
-    return api_response(data, source=source, cached=cached)
+    if force or snapshot_needs_refresh(payload):
+        def fetch_pending_rows():
+            rows, source = factory.get_with_fallback('get_convertible_pending')
+            if rows:
+                from services.convertible_bond import schedule_pending_enrichment
+                schedule_pending_enrichment(rows)
+            return rows, source
+
+        schedule_pending_snapshot_refresh(fetch_pending_rows)
+
+    return api_response(payload, source='placement_snapshot', cached=True)
 
 
 @app.route('/api/v1/convertible/new-listed')
@@ -694,10 +705,32 @@ from models.database import init_db, get_db_session
 from models.user import UserFavorite, UserReminder, UserSetting
 from models.placement import PlacementResult
 from models.convertible_timeline import ConvertibleTimeline
+from models.placement_snapshot import (
+    PlacementCandidate,
+    PlacementObservation,
+    PlacementRefreshJob,
+    PlacementSnapshot,
+    PlacementSourceEvidence,
+)
 from services.auth import code_to_openid, require_auth
 
 # 初始化数据库
 init_db()
+
+# Prime the persisted placement snapshot after startup. This daemon job never delays
+# a request, and only one instance is active within the service process.
+from services.placement_snapshot import start_pending_snapshot_scheduler
+
+
+def _startup_pending_snapshot_fetch():
+    rows, source = factory.get_with_fallback('get_convertible_pending')
+    if rows:
+        from services.convertible_bond import schedule_pending_enrichment
+        schedule_pending_enrichment(rows)
+    return rows, source
+
+
+start_pending_snapshot_scheduler(_startup_pending_snapshot_fetch)
 
 
 @app.route('/api/v1/user/login', methods=['POST'])

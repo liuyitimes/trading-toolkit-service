@@ -21,7 +21,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install -r cloudrun/requirements-dev.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+            pip install -r cloudrun/requirements-dev.txt
 
       - name: Run API log self-check
         env:

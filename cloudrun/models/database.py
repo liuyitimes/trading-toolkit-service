@@ -8,7 +8,7 @@ PostgreSQL 连接串格式: postgresql://用户名:密码@localhost:5432/trading
 import os
 from contextlib import contextmanager
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 # 默认 SQLite，可通过环境变量切换为 PostgreSQL
@@ -55,5 +55,22 @@ def get_db():
 
 def init_db():
     """初始化本地 SQLite；生产数据库由 Alembic 迁移管理。"""
-    if DATABASE_URL.startswith('sqlite'):
-        Base.metadata.create_all(bind=engine)
+    if not DATABASE_URL.startswith('sqlite'):
+        return
+
+    Base.metadata.create_all(bind=engine)
+    # `create_all` does not alter an existing SQLite table. Keep additive local
+    # migrations here because the service intentionally has no external migration
+    # runner and must preserve the operator's database during deployment.
+    inspector = inspect(engine)
+    if 'placement_observation' not in inspector.get_table_names():
+        return
+    columns = {column['name'] for column in inspector.get_columns('placement_observation')}
+    additions = {
+        'override_actor': 'VARCHAR(100)',
+        'override_reason': 'VARCHAR(500)',
+    }
+    with engine.begin() as connection:
+        for name, definition in additions.items():
+            if name not in columns:
+                connection.execute(text(f'ALTER TABLE placement_observation ADD COLUMN {name} {definition}'))

@@ -2,10 +2,10 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# 安装依赖（使用清华镜像加速，利用 Docker 层缓存）
+# 安装依赖并利用 Docker 层缓存
 COPY cloudrun/requirements.txt .
 COPY alembic.ini .
-RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple \
+  RUN pip install --no-cache-dir -r requirements.txt \
     && rm -rf /root/.cache/pip
 
 # 创建非 root 用户
