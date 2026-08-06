@@ -14,12 +14,13 @@ import logging
 import math
 import re
 import threading
+import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from services.http_client import sina_get, em_get
+from services.http_client import sina_get, em_get, tencent_get
 from utils.convert import safe_float
 
 logger = logging.getLogger('trading_toolkit')
@@ -31,6 +32,7 @@ _SINA_BOND_COUNT_URL = "http://vip.stock.finance.sina.com.cn/quotes_service/api/
 _EM_BOND_LIST_URL = "https://datacenter-web.eastmoney.com/api/data/v1/get"
 _SINA_STOCK_QUOTE_URL = "https://hq.sinajs.cn/list="
 _EM_KLINE_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+_TENCENT_KLINE_URL = 'https://web.ifzq.gtimg.cn/appstock/app/kline/kline'
 
 # 公告 API — 用来解析前 5 阶段日期（董事会预案→同意注册）
 _EM_NOTICE_URL = "https://np-anotice-stock.eastmoney.com/api/security/ann"
@@ -58,6 +60,10 @@ _TIMELINE_REFRESHING = set()
 _MA20_CACHE_TTL = 86400
 _MA20_FAILURE_TTL = 300
 _MA20_REFRESHING = set()
+_KLINE_REFRESH_LOCK = threading.Lock()
+_KLINE_REFRESHING = set()
+_MERGED_BOND_CACHE = {'expires_at': 0, 'df': None}
+_MERGED_BOND_CACHE_TTL = 60
 
 # A 股优先配售以股权登记日收市为界，登记日当天仍可参与。
 _CHINA_TZ = ZoneInfo('Asia/Shanghai')
@@ -114,6 +120,199 @@ def _parse_date(value):
             return datetime.strptime(text[:19 if ' ' in text else 10], fmt)
         except Exception:
             pass
+    return None
+
+
+def _kline_secid(code):
+    code_str = str(code or '').strip()
+    if not code_str:
+        return ''
+    return f"{1 if get_exchange_by_code(code_str) == 'sh' else 0}.{code_str}"
+
+
+def _fetch_em_kline_series(code, limit=500):
+    """Fetch one security's Eastmoney daily K-line series."""
+    secid = _kline_secid(code)
+    if not secid:
+        return []
+
+    params = {
+        'secid': secid,
+        'fields1': 'f1,f2,f3,f4,f5,f6',
+        'fields2': 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61',
+        'klt': '101',
+        'fqt': '1',
+        'end': '20500101',
+        'lmt': str(max(10, min(int(limit or 500), 500))),
+        'ut': 'fa5fd1943c7b386f172d6893dbbd1',
+    }
+    try:
+        resp = em_get(_EM_KLINE_URL, params=params, timeout=10)
+        d = resp.json()
+        klines = d.get('data', {}).get('klines', []) if d.get('data') else []
+        series = []
+        for raw in klines:
+            parts = str(raw).split(',')
+            if len(parts) < 3:
+                continue
+            trade_date = str(parts[0]).split(' ')[0]
+            close = safe_float(parts[2])
+            if trade_date and close > 0:
+                series.append({'date': trade_date, 'close': close})
+        series.sort(key=lambda item: item['date'])
+        return series
+    except Exception as e:
+        logger.warning(f'[EmKline] {code} 日线获取失败: {e}')
+        return []
+
+
+def _tencent_symbol(code):
+    code_str = str(code or '').strip()
+    exchange = get_exchange_by_code(code_str)
+    if exchange == 'sh':
+        return f'sh{code_str}'
+    if exchange == 'sz':
+        return f'sz{code_str}'
+    return ''
+
+
+def _fetch_tencent_kline_series(code, limit=500):
+    """使用腾讯日 K 线作为东财 push2his 不稳定时的备用源。"""
+    symbol = _tencent_symbol(code)
+    if not symbol:
+        return []
+
+    try:
+        params = {'param': f'{symbol},day,,,{max(10, min(int(limit or 500), 500))}'}
+        response = tencent_get(_TENCENT_KLINE_URL, params=params, timeout=10)
+        data = response.json().get('data') or {}
+        series = (data.get(symbol) or {}).get('day') or []
+        rows = []
+        for point in series:
+            if len(point) < 3:
+                continue
+            trade_date = str(point[0]).split(' ')[0]
+            close = safe_float(point[2])
+            if trade_date and close > 0:
+                rows.append({'date': trade_date, 'close': close})
+        rows.sort(key=lambda item: item['date'])
+        return rows
+    except Exception as e:
+        logger.warning(f'[TencentKline] {code} 日线获取失败: {e}')
+        return []
+
+
+def _fetch_kline_series(code, limit=500):
+    series = _fetch_tencent_kline_series(code, limit=limit)
+    if series:
+        return series
+    return _fetch_em_kline_series(code, limit=limit)
+
+
+def _kline_cache_key(code):
+    return f'convertible:kline:{code}'
+
+
+def _load_cached_kline_series(code, limit=500):
+    from services.cache import get_cache_manager
+
+    cache = get_cache_manager()
+    cached = cache.get(_kline_cache_key(code))
+    if isinstance(cached, list) and cached:
+        return cached
+
+    series = _fetch_kline_series(code, limit=limit)
+    if series:
+        cache.set(_kline_cache_key(code), series, 3600)
+    return series
+
+
+def _read_cached_kline_series(code):
+    from services.cache import get_cache_manager
+
+    cached = get_cache_manager().get(_kline_cache_key(code))
+    return cached if isinstance(cached, list) and cached else []
+
+
+def _clear_convertible_new_listed_cache():
+    try:
+        from services.cache import get_cache_manager
+
+        get_cache_manager().delete('convertible:new:listed:data')
+    except Exception as e:
+        logger.warning(f'[EmKline] 清理今年新债缓存失败: {e}')
+
+
+def _clear_convertible_pending_cache():
+    try:
+        from services.cache import get_cache_manager
+
+        get_cache_manager().delete('convertible:pending:data')
+    except Exception as e:
+        logger.warning(f'[EmKline] 清理待配债缓存失败: {e}')
+
+
+def _schedule_kline_refresh_many(
+    codes,
+    limit=500,
+    invalidate_new_listed=False,
+    invalidate_pending=False,
+):
+    """后台补齐 K 线缓存；列表接口只读缓存，避免首屏被上游逐只日线阻塞。"""
+    unique_codes = [str(code or '').strip() for code in codes if str(code or '').strip()]
+    if not unique_codes:
+        return
+
+    with _KLINE_REFRESH_LOCK:
+        pending = [code for code in dict.fromkeys(unique_codes) if code not in _KLINE_REFRESHING]
+        for code in pending:
+            _KLINE_REFRESHING.add(code)
+    if not pending:
+        return
+
+    def _run():
+        refreshed = False
+        try:
+            for code in pending:
+                series = _load_cached_kline_series(code, limit=limit)
+                refreshed = refreshed or bool(series)
+            if refreshed and invalidate_new_listed:
+                _clear_convertible_new_listed_cache()
+            if refreshed and invalidate_pending:
+                _clear_convertible_pending_cache()
+        finally:
+            with _KLINE_REFRESH_LOCK:
+                for code in pending:
+                    _KLINE_REFRESHING.discard(code)
+
+    threading.Thread(
+        target=_run,
+        name='convertible-kline-refresh',
+        daemon=True,
+    ).start()
+
+
+def _first_close_on_or_after(series, target_date):
+    target = str(target_date or '')[:10]
+    for row in series or []:
+        if row.get('date', '') >= target and row.get('close', 0) > 0:
+            return row
+    return None
+
+
+def _first_close_after(series, target_date):
+    target = str(target_date or '')[:10]
+    for row in series or []:
+        if row.get('date', '') > target and row.get('close', 0) > 0:
+            return row
+    return None
+
+
+def _close_on_date(series, target_date):
+    target = str(target_date or '')[:10]
+    for row in series or []:
+        if row.get('date', '') == target and row.get('close', 0) > 0:
+            return row
     return None
 
 
@@ -389,6 +588,11 @@ def _get_em_bonds():
 
 def _merge_bond_data():
     """合并多源数据：新浪（实时行情） + 东方财富（转股指标），输出英文字段"""
+    now_mono = time.monotonic()
+    cached_df = _MERGED_BOND_CACHE.get('df')
+    if cached_df is not None and _MERGED_BOND_CACHE.get('expires_at', 0) > now_mono:
+        return cached_df.copy()
+
     sina_df = _get_sina_bonds()
     if sina_df is None or sina_df.empty:
         return None
@@ -511,6 +715,8 @@ def _merge_bond_data():
             else:
                 df[col] = 0
 
+    _MERGED_BOND_CACHE['df'] = df.copy()
+    _MERGED_BOND_CACHE['expires_at'] = time.monotonic() + _MERGED_BOND_CACHE_TTL
     return df
 
 
@@ -607,6 +813,127 @@ def get_convertible_bond_list():
         return result
     except Exception as e:
         logger.warning(f'获取可转债列表失败: {e}')
+        return []
+
+
+def _calc_gain_pct(base_price, target_price):
+    base = safe_float(base_price)
+    target = safe_float(target_price)
+    if base <= 0 or target <= 0:
+        return None
+    return round((target - base) / base * 100, 2)
+
+
+def _series_from_date(series, start_date):
+    start = str(start_date or '')[:10]
+    return [row for row in series or [] if row.get('date', '') >= start and row.get('close', 0) > 0]
+
+
+def _first_series_row_in_month(series, month_prefix):
+    for row in series or []:
+        if str(row.get('date', '')).startswith(month_prefix) and row.get('close', 0) > 0:
+            return row
+    return None
+
+
+def get_convertible_new_listed():
+    """获取今年上市新债表现，返回英文字段的 dict 列表。"""
+    try:
+        df = _merge_bond_data()
+        if df is None or df.empty:
+            return []
+
+        today = datetime.now(_CHINA_TZ).date()
+        current_year = today.year
+        month_prefix = today.strftime('%Y-%m')
+        month_start = f'{month_prefix}-01'
+        rows = []
+        missing_kline_codes = []
+
+        for _, row in df.iterrows():
+            list_date = _format_date(row.get('list_date', ''))
+            parsed_list_date = _parse_date(list_date)
+            if not parsed_list_date or parsed_list_date.year != current_year:
+                continue
+
+            bond_code = str(row.get('bond_code', ''))
+            if not bond_code:
+                continue
+
+            series = _read_cached_kline_series(bond_code)
+            if not series:
+                missing_kline_codes.append(bond_code)
+            listed_series = _series_from_date(series, list_date)
+            list_row = listed_series[0] if listed_series else None
+            latest_row = listed_series[-1] if listed_series else None
+            realtime_price = safe_float(row.get('price', 0))
+            latest_price = latest_row.get('close') if latest_row else realtime_price or None
+            latest_trade_date = latest_row.get('date') if latest_row else ''
+
+            listing_gain = (
+                _calc_gain_pct(list_row.get('close'), latest_price)
+                if list_row and latest_price else None
+            )
+
+            month_row = None
+            if list_date <= month_start:
+                month_row = _first_series_row_in_month(series, month_prefix)
+            month_gain = (
+                _calc_gain_pct(month_row.get('close'), latest_price)
+                if month_row and latest_price else None
+            )
+
+            three_day_row = None
+            if listed_series:
+                three_day_row = listed_series[min(len(listed_series), 3) - 1]
+            elif parsed_list_date.date() == today and realtime_price > 0:
+                three_day_row = {'date': list_date, 'close': realtime_price}
+            three_day_gain = (
+                _calc_gain_pct(100, three_day_row.get('close'))
+                if three_day_row else None
+            )
+            three_day_stage = (
+                min(len(listed_series), 3)
+                if listed_series else 1 if three_day_row else 0
+            )
+
+            rows.append({
+                'bond_code': bond_code,
+                'bond_name': str(row.get('bond_name', '')),
+                'stock_code': str(row.get('stock_code', '')),
+                'stock_name': str(row.get('stock_name', '')),
+                'exchange': str(row.get('exchange', '')),
+                'list_date': list_date,
+                'price': realtime_price,
+                'latest_close': latest_price,
+                'latest_trade_date': latest_trade_date,
+                'listing_close': list_row.get('close') if list_row else None,
+                'month_base_close': month_row.get('close') if month_row else None,
+                'three_day_price': three_day_row.get('close') if three_day_row else None,
+                'three_day_price_date': three_day_row.get('date') if three_day_row else '',
+                'three_day_stage': three_day_stage,
+                'gain_since_listing': listing_gain,
+                'month_gain': month_gain,
+                'three_day_gain': three_day_gain,
+                'change_pct': safe_float(row.get('change_pct', 0)),
+                'premium_rate': safe_float(row.get('premium_rate', 0)),
+            })
+
+        _schedule_kline_refresh_many(
+            missing_kline_codes,
+            limit=500,
+            invalidate_new_listed=True,
+        )
+        rows.sort(
+            key=lambda item: (
+                item['list_date'] or '',
+                abs(item['three_day_gain']) if item['three_day_gain'] is not None else -999,
+            ),
+            reverse=True,
+        )
+        return rows
+    except Exception as e:
+        logger.warning(f'获取今年上市新债表现失败: {e}')
         return []
 
 
@@ -928,6 +1255,8 @@ def _fetch_em_pending_bonds():
         # 但用 None 明确表示不可用，且不将其注入优配评分。
         expected_profit = None
         safety_pad = None
+        registration_close_price = None
+        post_registration_close_price = None
 
         # 正股偏离 MA20
         ma20_price = ma20_map.get(stock_code, 0)
@@ -945,8 +1274,24 @@ def _fetch_em_pending_bonds():
         # 它与 stock_cash_ratio 的评分口径不同，单独提供给客户端展示。
         cash_ratio = _calc_cash_ratio(per_share_alloc, stock_price)
 
-        # 股权登记日价格（近似为当前价，盘中会动态变化）
-        record_price = stock_price
+        # 股权登记日历史收盘价与登记日后收尾价，使用已缓存日 K 线事实，不回退到当前价。
+        # 缓存缺失时后台回补，避免待配债列表首屏被上游逐只日线阻塞。
+        kline_series = _read_cached_kline_series(stock_code)
+        if registration_date:
+            reg_row = _close_on_date(kline_series, registration_date)
+            if reg_row:
+                registration_close_price = reg_row.get('close')
+            after_row = _first_close_after(kline_series, registration_date)
+            if after_row:
+                post_registration_close_price = after_row.get('close')
+
+        record_price = registration_close_price
+        if registration_date and not kline_series:
+            _schedule_kline_refresh_many(
+                [stock_code],
+                limit=500,
+                invalidate_pending=True,
+            )
 
         # 状态推导（基于日期）
         status = _get_status_from_dates(pub_start, apply_date, now)
@@ -1005,6 +1350,8 @@ def _fetch_em_pending_bonds():
             'risk_level': risk_level,
             'strategy_status': 'observation',
             'eligibility_verified': False,
+            'registration_close_price': registration_close_price,
+            'post_registration_close_price': post_registration_close_price,
             'evidence_note': '需以发行公告核验优配资格、缴款截止和配售代码后方可执行。',
         })
 
@@ -1104,29 +1451,11 @@ def _fetch_stock_fundamentals(stock_codes):
 
 def _fetch_stock_ma20(stock_code):
     """获取单只股票的 20 日均线（东方财富K线 API）"""
-    code_str = str(stock_code)
-    if code_str.startswith(('6', '9')):
-        secid = f'1.{code_str}'
-    else:
-        secid = f'0.{code_str}'
-
-    params = {
-        'secid': secid,
-        'fields1': 'f1,f2,f3,f4,f5,f6',
-        'fields2': 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61',
-        'klt': '101',    # 日K
-        'fqt': '1',      # 前复权
-        'end': '20500101',
-        'lmt': '25',     # 最近 25 根K线
-        'ut': 'fa5fd1943c7b386f172d6893dbbd1',
-    }
     try:
-        resp = em_get(_EM_KLINE_URL, params=params, timeout=10)
-        d = resp.json()
-        klines = d.get('data', {}).get('klines', []) if d.get('data') else []
-        if len(klines) < 20:
+        series = _load_cached_kline_series(stock_code, limit=25)
+        if len(series) < 20:
             return 0
-        closes = [float(k.split(',')[2]) for k in klines[-20:]]
+        closes = [safe_float(row.get('close')) for row in series[-20:]]
         return round(sum(closes) / 20, 2)
     except Exception as e:
         logger.warning(f'[EmKline] {stock_code} MA20 获取失败: {e}')

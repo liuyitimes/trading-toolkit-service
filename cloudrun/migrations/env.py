@@ -14,6 +14,7 @@ if str(SERVICE_ROOT) not in sys.path:
 
 from models.database import Base
 import models.convertible_timeline  # noqa: F401
+import models.lof_premium  # noqa: F401
 import models.placement  # noqa: F401
 import models.user  # noqa: F401
 

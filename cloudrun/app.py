@@ -300,6 +300,18 @@ def convertible_pending():
     return api_response(data, source=source, cached=cached)
 
 
+@app.route('/api/v1/convertible/new-listed')
+@limit(30)
+def convertible_new_listed():
+    """今年上市新债表现列表"""
+    force = request.args.get('refresh', '').lower() == 'true'
+    data, source, cached = fetch_with_cache(
+        'convertible_new_listed', 'get_convertible_new_listed', force_refresh=force)
+    if data is None:
+        return api_response([], source='none', cached=False)
+    return api_response(data, source=source, cached=cached)
+
+
 # ==================== 配售公告 API ====================
 
 @app.route('/api/v1/placement/sync', methods=['POST'])
@@ -928,6 +940,7 @@ def start_cache_warmup():
                 ('fund_flow', lambda: factory.get_with_fallback('get_fund_flow')[0]),
                 ('lof_summary', lambda: factory.get_with_fallback('get_lof_summary')[0]),
                 ('convertible_list', lambda: factory.get_with_fallback('get_convertible_list', page=1, page_size=50)[0]),
+                ('convertible_new_listed', lambda: factory.get_with_fallback('get_convertible_new_listed')[0]),
             ]
             warmup_cache(warmup_items)
         except Exception as e:
@@ -940,6 +953,11 @@ def start_cache_warmup():
 
 # ==================== 启动 ====================
 
-if __name__ == '__main__':
+def serve(debug=False):
+    """WSL/systemd 本地部署入口。"""
     start_cache_warmup()
-    app.run(host='0.0.0.0', port=8080, debug=True)
+    app.run(host='0.0.0.0', port=8080, debug=debug, use_reloader=False)
+
+
+if __name__ == '__main__':
+    serve(debug=True)

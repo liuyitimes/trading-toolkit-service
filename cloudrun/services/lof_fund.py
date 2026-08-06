@@ -434,7 +434,7 @@ def _fetch_tencent_quotes(universe):
     return result
 
 
-def _parse_row(row, quote_values, rule, fetched_at):
+def _parse_row(row, quote_values, rule, fetched_at, nav_date=None):
     """Join LOF membership with Tencent's price and latest unit-NAV fields."""
     code = str(row.get('f12') or '')
     values = quote_values or []
@@ -463,7 +463,8 @@ def _parse_row(row, quote_values, rule, fetched_at):
         '估值': valuation,
         '溢价率': premium,
         '行情时间': quote_time,
-        '净值日期': _parse_iso(quote_time).date().isoformat() if quote_time else None,
+        # 净值日期必须是上游实际公布日；行情时间不代表净值公布日，缺失时明确为 None。
+        '净值日期': nav_date,
         '净值来源': '腾讯财经基金行情（最新单位净值）',
         '报价有效': valid_quote,
         '申购状态': rule['subscription_status'],
@@ -534,6 +535,26 @@ def get_lof_list():
         # security type is the final LOF-only guard against ETFs.
         if item['报价有效'] or str(quote_values[61]).strip() == 'LOF':
             result.append(item)
+
+    # 连续正溢价与净值日期来自持久化观测；查询失败时保持缺失，不伪造零值。
+    try:
+        from models.database import SessionLocal
+        from services.lof_premium_persistence import (
+            compute_premium_persistence_batch,
+            latest_nav_dates,
+        )
+
+        codes = [item['代码'] for item in result if item.get('代码')]
+        with SessionLocal() as db:
+            persistence_map = compute_premium_persistence_batch(db, codes)
+            nav_map = latest_nav_dates(db, codes)
+        for item in result:
+            code = item.get('代码')
+            item['premium_persistence'] = (persistence_map or {}).get(code)
+            nav_info = (nav_map or {}).get(code)
+            item['净值日期'] = (nav_info or {}).get('nav_date') or None
+    except Exception as exc:
+        logger.warning('[LOF] premium persistence 接入列表失败: %s', exc)
 
     # K-line calls are intentionally bounded; absent history keeps a fund in observation.
     candidates = sorted(

@@ -1,0 +1,9 @@
+[Unit]
+Description=Run LOF premium daily capture on trading days 20:30 (CST)
+
+[Timer]
+OnCalendar=Mon..Fri 20:30:00 Asia/Shanghai
+Persistent=false
+
+[Install]
+WantedBy=timers.target

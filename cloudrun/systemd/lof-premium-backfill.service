@@ -1,0 +1,12 @@
+[Unit]
+Description=Trading Toolkit LOF premium current-year backfill
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=__CLOUDRUN_DIR__
+ExecStart=__PYTHON__ __CLOUDRUN_DIR__/cli.py backfill --year %i
+User=__SERVICE_USER__
+StandardOutput=journal
+StandardError=journal

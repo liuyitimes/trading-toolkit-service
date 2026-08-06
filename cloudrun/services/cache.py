@@ -20,6 +20,7 @@ CACHE_TTL_CONFIG = {
     'convertible_list': 900,
     'convertible_signals': 900,
     'convertible_temperature': 900,
+    'convertible_new_listed': 1800,
     'lof_list': 900,
     'lof_opportunities': 900,
     'lof_summary': 900,
@@ -52,6 +53,7 @@ def get_cache_ttl(data_type: str) -> int:
             'convertible_signals', 'lof_opportunities', 'market_sentiment',
             'fund_flow', 'hot_sectors', 'convertible_signals', 'lof_summary',
             'hk_ipo_list', 'hk_ipo_upcoming', 'hk_ipo_summary',
+            'convertible_new_listed',
         ]
         if data_type in non_trading_types:
             return min(base_ttl * 4, 14400)

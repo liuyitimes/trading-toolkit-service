@@ -19,6 +19,7 @@ from services.base import BaseDataSource
 from services.convertible_bond import (
     get_market_temperature,
     get_convertible_bond_list,
+    get_convertible_new_listed,
     get_convertible_bond_detail,
     get_convertible_bond_signals,
     get_pending_bonds,
@@ -333,6 +334,14 @@ class DirectSource(BaseDataSource):
             return rows if rows else []
         except Exception as e:
             logger.warning(f'[DirectSource] get_convertible_pending 失败: {e}')
+            return []
+
+    def get_convertible_new_listed(self) -> list:
+        try:
+            rows = get_convertible_new_listed()
+            return rows if rows else []
+        except Exception as e:
+            logger.warning(f'[DirectSource] get_convertible_new_listed 失败: {e}')
             return []
 
     def sync_placement_announcements(self, days_back=30) -> dict:

@@ -63,10 +63,60 @@
 | `cash_ratio` | `cashRatio` | 百元含权 | 每投入 100 元正股市值可获配的可转债面额。 |
 | `expected_profit` | `expectedProfit` / `_expectedProfitRaw` | 预估收益 | 基于当前预期上市溢价假设的测算值，不是承诺收益。 |
 | `safety_pad` | `safetyPad` / `_safetyPadRaw` | 安全垫 | 预估收益相对持仓成本的缓冲比例。 |
+| `registration_close_price` | `registrationClosePrice` / `_registrationClosePriceRaw` | 股权登记日收盘价 | 使用正股日 K 线中股权登记日当天收盘价；缺失时为 `null`，不得用当前价替代。 |
+| `post_registration_close_price` | `postRegistrationClosePrice` / `_postRegistrationClosePriceRaw` | 登记日后收尾价 | 使用股权登记日之后第一个可验证 A 股交易日收盘价；缺失时为 `null`。 |
 | `strategy_score` | `score` | 配债评分 | 供排序和比较使用的综合分。 |
 | `strategy_rating` | `rating` | 配债评级 | 例如“推荐”“可关注”“谨慎”。 |
 
 `cash_ratio` 只表示百元含权。`stock_cash_ratio` 是“正股总市值 / 转债发行规模”的策略评分指标，不能替代或展示为百元含权。完整计算口径见 [可转债抢权配售字段](domain/convertible-placement.md)。
+
+配债参与后总收益由 Web 基于历史事实和用户选择的预期上市溢价率派生：
+
+```text
+正股段收益 = (登记日后收尾价 - 股权登记日收盘价) × 获配 1,000 元面值所需的实际正股股数
+转债预期收益 = 1,000 × 预期上市溢价率
+配债参与后总收益 = 正股段收益 + 转债预期收益
+```
+
+如果 `registration_close_price` 或 `post_registration_close_price` 缺失，Web 必须显示“--”，不得用正股当前价推断真实复盘收益。
+
+## 今年上市新债表现字段
+
+`GET /api/v1/convertible/new-listed` 返回当前中国时区自然年内上市的新债数组。以下字段用于“今年新债”Tab：
+
+| 后端字段 | Web 字段 | 面向用户的名称 | 说明 |
+| --- | --- | --- | --- |
+| `bond_code` | `bondCode` | 转债代码 | 可转债证券代码字符串。 |
+| `bond_name` | `bondName` | 转债名称 | 可转债名称。 |
+| `stock_code` | `stockCode` | 正股代码 | 对应正股代码。 |
+| `stock_name` | `stockName` | 正股名称 | 对应正股名称。 |
+| `list_date` | `listDate` | 上市日 | 当前自然年内的上市日期。 |
+| `latest_close` | `latestClose` | 最新收盘价 | 最新可验证交易日收盘价；当日仅有实时行情时可由 `price` 辅助展示。 |
+| `listing_close` | `listingClose` | 上市日收盘价 | “上市以来”涨幅基准。 |
+| `month_base_close` | `monthBaseClose` | 本月基准收盘价 | 本月首个可验证交易日收盘价。 |
+| `three_day_price` | `threeDayPrice` | 前三日阶段价 | 上市后第 1 / 2 / 3 个交易日中已完成阶段的收盘价。 |
+| `three_day_stage` | `threeDayStage` | 前三日阶段 | 取值 1、2、3；上市未满三个交易日时展示已完成交易日阶段。 |
+| `gain_since_listing` | `gainSinceListing` | 上市以来涨幅 | 以上市日收盘价为基准，单位为百分比数值。 |
+| `month_gain` | `monthGain` | 本月涨幅 | 以本月首个交易日收盘价为基准，单位为百分比数值；基准不可验证时为 `null`。 |
+| `three_day_gain` | `threeDayGain` | 前三日涨幅 | 以 100 元面值为基准，按已完成的第 1 / 2 / 3 个交易日阶段计算。 |
+
+## LOF 连续正溢价持续性
+
+`/api/v1/lof/list` 每项返回 `premium_persistence` 对象，描述连续正溢价的已观测天数与可信度：
+
+| 字段 | 说明 |
+| --- | --- |
+| `consecutive_positive_sessions` | 已观测连续正溢价天数；不可用时为 `null`，不得用零值替代。 |
+| `status` | `complete`（观测完整）、`partial`（历史不足/存在缺口）、`unavailable`（当前交易日无同日可比观测）。 |
+| `as_of` | 结果对应的最近交易日（中国时区）。 |
+| `history_started_on` | 历史覆盖起点；`partial` 因触及覆盖边界时披露，否则为 `null`。 |
+| `reason` | 不可用或历史不足的具体原因；`complete` 时为 `null`。 |
+
+口径：
+
+- 当前交易日同日可比且溢价不为正时返回 `0` 且状态为 `complete`，该零是业务事实。
+- 历史不足或缺口返回 `partial`，天数仅表示已观测下界，Web 显示“至少 N 天”并披露原因。
+- 观测由 `cli.py` 回补/采集写入 PostgreSQL（开发环境 SQLite），失败不得以缓存、零值或推断替代。
 
 ## 配债来源信息
 

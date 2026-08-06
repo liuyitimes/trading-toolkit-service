@@ -51,6 +51,7 @@ def normalize_lof(row: dict) -> dict:
         'quote_at': row.get('行情时间'),
         'nav_date': row.get('净值日期'),
         'nav_source': str(row.get('净值来源', '')),
+        'premium_persistence': row.get('premium_persistence'),
         'valid_quote': bool(row.get('报价有效')),
         'subscription_open': bool(row.get('可申购')),
         'subscription_limit': row.get('单账户限额'),

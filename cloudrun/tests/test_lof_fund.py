@@ -128,11 +128,30 @@ class LofExecutionRuleTest(unittest.TestCase):
         quote[37] = '10'
         quote[61] = 'LOF'
         quote[81] = '1.0'
-        parsed = _parse_row(row, quote, _resolve_execution_rule('161725', now), now)
+        parsed = _parse_row(
+            row,
+            quote,
+            _resolve_execution_rule('161725', now),
+            now,
+            nav_date='2026-07-09',
+        )
         self.assertTrue(parsed['报价有效'])
-        self.assertEqual(parsed['净值日期'], '2026-07-10')
+        self.assertEqual(parsed['净值日期'], '2026-07-09')
         self.assertEqual(parsed['溢价率'], 10.0)
         self.assertEqual(parsed['成交额'], 100000)
+
+    def test_nav_date_is_not_fabricated_from_quote_time(self):
+        now = datetime(2026, 7, 12, 10, 0, tzinfo=CST)
+        row = {'f12': '161725', 'f13': '0', 'f14': '招商中证白酒'}
+        quote = [''] * 82
+        quote[1] = '招商中证白酒'
+        quote[2] = '161725'
+        quote[3] = '1.1'
+        quote[30] = '20260710150000'
+        quote[61] = 'LOF'
+        quote[81] = '1.0'
+        parsed = _parse_row(row, quote, _resolve_execution_rule('161725', now), now)
+        self.assertIsNone(parsed['净值日期'])
 
     def test_normalizer_preserves_execution_evidence_fields(self):
         normalized = normalize_lof({
