@@ -24,3 +24,43 @@ def test_contract_endpoints_match_flask_routes():
     ]
 
     assert missing == []
+
+
+def test_new_listed_cold_cache_returns_snapshot_without_waiting_for_upstream(monkeypatch):
+    snapshot = [
+        {
+            'bond_code': '113708',
+            'bond_name': '曙26转债',
+            'list_date': '2026-08-06',
+            'month_gain': 0.0,
+            'three_day_gain': 46.72,
+            'three_day_stage': 1,
+        }
+    ]
+
+    monkeypatch.setattr(backend_app.cache, 'get', lambda key: None)
+    monkeypatch.setattr(
+        'services.convertible_bond._read_new_listed_snapshot',
+        lambda: snapshot,
+    )
+    monkeypatch.setattr(
+        'services.cache._maybe_trigger_background_refresh',
+        lambda *args: (_ for _ in ()).throw(
+            AssertionError('已有快照时不应触发上游刷新')
+        ),
+    )
+
+    def unexpected_sync(*args, **kwargs):
+        raise AssertionError('冷缓存请求不应同步访问上游')
+
+    monkeypatch.setattr(backend_app.factory, 'get_with_fallback', unexpected_sync)
+
+    response = backend_app.app.test_client().get(
+        '/api/v1/convertible/new-listed'
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload['data'] == snapshot
+    assert payload['meta']['source'] == 'snapshot'
+    assert payload['meta']['cached'] is True

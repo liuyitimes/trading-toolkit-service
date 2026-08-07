@@ -44,6 +44,7 @@ project.private.config.json
 
 # Database
 *.db
+cloudrun/data/convertible_new_listed.json
 
 # Test artifacts
 tests/screenshots/

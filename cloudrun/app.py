@@ -316,6 +316,31 @@ def convertible_pending():
 def convertible_new_listed():
     """今年上市新债表现列表"""
     force = request.args.get('refresh', '').lower() == 'true'
+    if not force:
+        cache_key = build_cache_key('convertible:new:listed', 'data')
+        cached = cache.get(cache_key)
+        from services.convertible_bond import _read_new_listed_snapshot
+
+        def fetch_new_listed():
+            data, source = factory.get_with_fallback('get_convertible_new_listed')
+            return data
+
+        if cached is not None:
+            return api_response(cached, source='cache', cached=True)
+
+        snapshot = _read_new_listed_snapshot()
+        if snapshot:
+            return api_response(snapshot, source='snapshot', cached=True)
+
+        # 首次启动没有快照时也不阻塞首屏；后台刷新完成后下一次请求即可拿到数据。
+        from services.cache import _maybe_trigger_background_refresh
+
+        ttl = get_cache_ttl('convertible_new_listed')
+        _maybe_trigger_background_refresh(
+            cache_key, fetch_new_listed, ttl, 0.7
+        )
+        return api_response([], source='warming', cached=True)
+
     data, source, cached = fetch_with_cache(
         'convertible_new_listed', 'get_convertible_new_listed', force_refresh=force)
     if data is None:

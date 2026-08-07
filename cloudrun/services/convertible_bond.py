@@ -12,10 +12,12 @@
 import json
 import logging
 import math
+import os
 import re
 import threading
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -70,6 +72,10 @@ _EM_BOND_QUOTE_URL = 'https://push2delay.eastmoney.com/api/qt/clist/get'
 _EM_BOND_BOARD = 'b:MK0354'
 _EM_TURNOVER_CACHE = {'expires_at': 0, 'map': None}
 _EM_TURNOVER_CACHE_TTL = 60
+_NEW_LISTED_SNAPSHOT_PATH = (
+    Path(__file__).resolve().parents[1] / 'data' / 'convertible_new_listed.json'
+)
+_NEW_LISTED_SNAPSHOT_LOCK = threading.Lock()
 
 # A 股优先配售以股权登记日收市为界，登记日当天仍可参与。
 _CHINA_TZ = ZoneInfo('Asia/Shanghai')
@@ -247,6 +253,50 @@ def _clear_convertible_new_listed_cache():
         get_cache_manager().delete('convertible:new:listed:data')
     except Exception as e:
         logger.warning(f'[EmKline] 清理今年新债缓存失败: {e}')
+
+
+def _read_new_listed_snapshot():
+    """读取最近一次成功生成的今年新债快照，供服务重启冷缓存时秒回。"""
+    try:
+        payload = json.loads(_NEW_LISTED_SNAPSHOT_PATH.read_text(encoding='utf-8'))
+        rows = payload.get('rows') if isinstance(payload, dict) else None
+        return rows if isinstance(rows, list) else []
+    except (FileNotFoundError, OSError, ValueError, TypeError):
+        return []
+
+
+def _new_listed_snapshot_quality(rows):
+    if not isinstance(rows, list):
+        return (0, 0, 0)
+    return (
+        len(rows),
+        sum(1 for row in rows if row.get('three_day_gain') is not None),
+        sum(1 for row in rows if row.get('month_gain') is not None),
+    )
+
+
+def _write_new_listed_snapshot(rows):
+    """原子写入今年新债快照；失败不影响主请求。"""
+    if not isinstance(rows, list) or not rows:
+        return
+    try:
+        current_rows = _read_new_listed_snapshot()
+        if _new_listed_snapshot_quality(rows) < _new_listed_snapshot_quality(current_rows):
+            return
+        _NEW_LISTED_SNAPSHOT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            'updated_at': datetime.now(_CHINA_TZ).isoformat(),
+            'rows': rows,
+        }
+        temp_path = _NEW_LISTED_SNAPSHOT_PATH.with_suffix('.tmp')
+        with _NEW_LISTED_SNAPSHOT_LOCK:
+            temp_path.write_text(
+                json.dumps(payload, ensure_ascii=False, default=str),
+                encoding='utf-8',
+            )
+            os.replace(temp_path, _NEW_LISTED_SNAPSHOT_PATH)
+    except OSError as exc:
+        logger.warning(f'[EmKline] 写入今年新债快照失败: {exc}')
 
 
 def _clear_convertible_pending_cache():
@@ -894,8 +944,15 @@ def _series_from_date(series, start_date):
     return [row for row in series or [] if row.get('date', '') >= start and row.get('close', 0) > 0]
 
 
+def _first_series_row_in_month(series, month_prefix):
+    for row in series or []:
+        if str(row.get('date', '')).startswith(month_prefix) and row.get('close', 0) > 0:
+            return row
+    return None
+
+
 def get_convertible_new_listed():
-    """获取今年上市新债列表：上市以来涨幅、剩余规模与换手率。"""
+    """获取今年上市新债列表：涨幅表现、剩余规模与换手率。"""
     try:
         df = _merge_bond_data()
         if df is None or df.empty:
@@ -903,6 +960,7 @@ def get_convertible_new_listed():
 
         today = datetime.now(_CHINA_TZ).date()
         current_year = today.year
+        month_prefix = today.strftime('%Y-%m')
         rows = []
         missing_kline_codes = []
         turnover_map = _fetch_em_bond_turnover_map()
@@ -931,6 +989,25 @@ def get_convertible_new_listed():
                 _calc_gain_pct(list_row.get('close'), latest_price)
                 if list_row and latest_price else None
             )
+            month_row = _first_series_row_in_month(series, month_prefix)
+            month_gain = (
+                _calc_gain_pct(month_row.get('close'), latest_price)
+                if month_row and latest_price else None
+            )
+
+            three_day_row = None
+            if listed_series:
+                three_day_row = listed_series[min(len(listed_series), 3) - 1]
+            elif parsed_list_date.date() == today and realtime_price > 0:
+                three_day_row = {'date': list_date, 'close': realtime_price}
+            three_day_gain = (
+                _calc_gain_pct(100, three_day_row.get('close'))
+                if three_day_row else None
+            )
+            three_day_stage = (
+                min(len(listed_series), 3)
+                if listed_series else 1 if three_day_row else 0
+            )
 
             rows.append({
                 'bond_code': bond_code,
@@ -944,6 +1021,12 @@ def get_convertible_new_listed():
                 'latest_trade_date': latest_trade_date,
                 'listing_close': list_row.get('close') if list_row else None,
                 'gain_since_listing': listing_gain,
+                'month_base_close': month_row.get('close') if month_row else None,
+                'month_gain': month_gain,
+                'three_day_price': three_day_row.get('close') if three_day_row else None,
+                'three_day_price_date': three_day_row.get('date') if three_day_row else '',
+                'three_day_stage': three_day_stage,
+                'three_day_gain': three_day_gain,
                 'change_pct': safe_float(row.get('change_pct', 0)),
                 'premium_rate': safe_float(row.get('premium_rate', 0)),
                 'issue_size': safe_float(row.get('issue_size', 0)) or None,
@@ -962,6 +1045,7 @@ def get_convertible_new_listed():
             ),
             reverse=True,
         )
+        _write_new_listed_snapshot(rows)
         return rows
     except Exception as e:
         logger.warning(f'获取今年上市新债表现失败: {e}')

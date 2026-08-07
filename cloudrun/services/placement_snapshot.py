@@ -102,7 +102,10 @@ def _reconcile_row(current, incoming, source_kind):
 
 
 def _public_row(row):
-    return {key: value for key, value in row.items() if not key.startswith('_placement_')}
+    public = {key: value for key, value in row.items() if not key.startswith('_placement_')}
+    if not public.get('stock_code') and not public.get('bond_code'):
+        return {}
+    return public
 
 
 def _refresh_interval(rows, now):
