@@ -10,6 +10,30 @@ from services import placement_snapshot
 
 
 class PlacementSnapshotPolicyTest(unittest.TestCase):
+    def test_abandoned_refresh_job_can_be_taken_over_after_timeout(self):
+        job = type('Job', (), {
+            'status': 'running',
+            'started_at': datetime(2026, 7, 22, 9, 54),
+            'requested_at': datetime(2026, 7, 22, 9, 53),
+        })()
+        self.assertTrue(
+            placement_snapshot._is_abandoned_refresh_job(
+                job, datetime(2026, 7, 22, 10, 0)
+            )
+        )
+
+    def test_recent_refresh_job_stays_deduplicated(self):
+        job = type('Job', (), {
+            'status': 'running',
+            'started_at': datetime(2026, 7, 22, 9, 58),
+            'requested_at': datetime(2026, 7, 22, 9, 57),
+        })()
+        self.assertFalse(
+            placement_snapshot._is_abandoned_refresh_job(
+                job, datetime(2026, 7, 22, 10, 0)
+            )
+        )
+
     def test_imminent_candidate_refreshes_every_five_minutes(self):
         now = datetime(2026, 7, 22, 10, 0)
         rows = [{'registration_date': '2026-07-23'}]
@@ -65,9 +89,60 @@ class PlacementSnapshotPolicyTest(unittest.TestCase):
         self.assertEqual(priority, placement_snapshot.SOURCE_PRIORITY['cninfo'])
         self.assertEqual(merged['registration_date'], '2026-07-24')
 
+    def test_equal_priority_official_observation_fills_missing_term(self):
+        current = {
+            'shareholder_ratio': None,
+            '_placement_issuer_terms_priority': placement_snapshot.SOURCE_PRIORITY['cninfo'],
+        }
+        merged, result, _ = placement_snapshot._reconcile_row(
+            current, {'shareholder_ratio': 71.13}, 'cninfo'
+        )
+        self.assertEqual(result, 'accepted')
+        self.assertEqual(merged['shareholder_ratio'], 71.13)
+
+    def test_unavailable_official_observation_clears_legacy_ratio(self):
+        current = {
+            'shareholder_ratio': 100.0,
+            '_placement_issuer_terms_priority': placement_snapshot.SOURCE_PRIORITY['cninfo'],
+        }
+        merged, result, _ = placement_snapshot._reconcile_row(
+            current,
+            {
+                'shareholder_ratio': None,
+                'placement_data_status': 'unavailable',
+            },
+            'cninfo',
+        )
+        self.assertEqual(result, 'accepted')
+        self.assertIsNone(merged['shareholder_ratio'])
+
     def test_public_row_hides_internal_reconciliation_state(self):
         row = placement_snapshot._public_row({'stock_code': '001202', '_placement_issuer_terms_priority': 400})
-        self.assertEqual(row, {'stock_code': '001202'})
+        self.assertEqual(
+            row,
+            {
+                'stock_code': '001202',
+                'shareholder_amount': None,
+                'shareholder_ratio': None,
+                'tradable_amount': None,
+                'placement_data_status': 'unavailable',
+                'placement_data_reason': '等待巨潮官方配售结果公告',
+            },
+        )
+
+    def test_public_row_removes_legacy_estimated_placement_metrics(self):
+        row = placement_snapshot._public_row(
+            {
+                'stock_code': '688480',
+                'issue_size': 5.519,
+                'shareholder_ratio': 0,
+                'tradable_amount': 5.519,
+            }
+        )
+        self.assertIsNone(row['shareholder_amount'])
+        self.assertIsNone(row['shareholder_ratio'])
+        self.assertIsNone(row['tradable_amount'])
+        self.assertEqual(row['placement_data_status'], 'unavailable')
 
     def test_direct_pending_collector_is_recorded_as_eastmoney(self):
         self.assertEqual(placement_snapshot._source_kind({}, 'direct'), 'eastmoney')

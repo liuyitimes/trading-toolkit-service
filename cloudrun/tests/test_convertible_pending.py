@@ -14,6 +14,7 @@ from services.convertible_bond import (
     _fetch_em_bond_turnover_map,
     _fetch_kline_series,
     _fetch_em_pending_bonds,
+    _enrich_with_local_placement,
     _get_placement_observation_state,
     _is_late_stage_observation,
     _is_pending_placement_visible,
@@ -24,6 +25,54 @@ from services.convertible_bond import (
 
 
 class PendingPlacementVisibilityTest(unittest.TestCase):
+    def test_announcement_amount_drives_tradable_amount(self):
+        rows = [{'stock_code': '300001', 'issue_size': 10.0}]
+        with patch(
+            'services.announcement_parser.get_placement_by_stock',
+            return_value={
+                'shareholder_amount': 6.25,
+                'shareholder_ratio': 62.5,
+                'announce_date': '2026-08-08',
+                'announcement_id': '202608080001',
+                'source_url': 'https://static.cninfo.com.cn/a.pdf',
+            },
+        ):
+            result = _enrich_with_local_placement(rows)
+
+        self.assertEqual(result[0]['shareholder_amount'], 6.25)
+        self.assertEqual(result[0]['shareholder_ratio'], 62.5)
+        self.assertEqual(result[0]['tradable_amount'], 3.75)
+        self.assertEqual(result[0]['placement_data_status'], 'verified')
+
+    def test_missing_announcement_does_not_fallback_to_issue_size(self):
+        rows = [{'stock_code': '300002', 'issue_size': 10.0}]
+        with patch(
+            'services.announcement_parser.get_placement_by_stock',
+            return_value=None,
+        ):
+            result = _enrich_with_local_placement(rows)
+
+        self.assertIsNone(result[0]['shareholder_amount'])
+        self.assertIsNone(result[0]['shareholder_ratio'])
+        self.assertIsNone(result[0]['tradable_amount'])
+        self.assertEqual(result[0]['placement_data_status'], 'unavailable')
+
+    def test_ratio_without_shareholder_amount_remains_unavailable(self):
+        rows = [{'stock_code': '300003', 'issue_size': 10.0}]
+        with patch(
+            'services.announcement_parser.get_placement_by_stock',
+            return_value={
+                'shareholder_amount': None,
+                'shareholder_ratio': 100.0,
+                'announce_date': '2026-08-08',
+            },
+        ):
+            result = _enrich_with_local_placement(rows)
+
+        self.assertIsNone(result[0]['shareholder_amount'])
+        self.assertIsNone(result[0]['shareholder_ratio'])
+        self.assertIsNone(result[0]['tradable_amount'])
+        self.assertEqual(result[0]['placement_data_status'], 'unavailable')
     def test_registration_date_state_keeps_expired_items_visible(self):
         now = datetime(2026, 7, 14, 9, 0)
         self.assertEqual(_get_placement_observation_state('2026-07-13', now), 'expired')

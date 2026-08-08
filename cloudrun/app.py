@@ -302,7 +302,11 @@ def convertible_pending():
         def fetch_pending_rows():
             rows, source = factory.get_with_fallback('get_convertible_pending')
             if rows:
-                from services.convertible_bond import schedule_pending_enrichment
+                from services.convertible_bond import (
+                    enrich_pending_with_placement_announcements,
+                    schedule_pending_enrichment,
+                )
+                rows = enrich_pending_with_placement_announcements(rows)
                 schedule_pending_enrichment(rows)
             return rows, source
 
@@ -750,7 +754,11 @@ from services.placement_snapshot import start_pending_snapshot_scheduler
 def _startup_pending_snapshot_fetch():
     rows, source = factory.get_with_fallback('get_convertible_pending')
     if rows:
-        from services.convertible_bond import schedule_pending_enrichment
+        from services.convertible_bond import (
+            enrich_pending_with_placement_announcements,
+            schedule_pending_enrichment,
+        )
+        rows = enrich_pending_with_placement_announcements(rows)
         schedule_pending_enrichment(rows)
     return rows, source
 

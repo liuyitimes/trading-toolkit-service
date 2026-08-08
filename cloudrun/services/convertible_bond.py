@@ -77,6 +77,11 @@ _NEW_LISTED_SNAPSHOT_PATH = (
 )
 _NEW_LISTED_SNAPSHOT_LOCK = threading.Lock()
 
+_PLACEMENT_ANNOUNCEMENT_SYNC_LOCK = threading.Lock()
+_PLACEMENT_ANNOUNCEMENT_SYNCING = False
+_PLACEMENT_ANNOUNCEMENT_LAST_SYNC = 0.0
+_PLACEMENT_ANNOUNCEMENT_SYNC_INTERVAL = 1800
+
 # A 股优先配售以股权登记日收市为界，登记日当天仍可参与。
 _CHINA_TZ = ZoneInfo('Asia/Shanghai')
 
@@ -1237,8 +1242,8 @@ def _is_late_stage_observation(bond, timeline):
 def _enrich_with_local_placement(rows):
     """用本地公告数据库的配售结果覆盖预估数据
 
-    对于已完成配售的债券，公告数据更准确（来自交易所官方公告）。
-    东方财富的预估配售率在配售完成前可能为 0。
+    对于已完成配售的债券，公告数据更准确（来自巨潮官方公告）。
+    公告缺失时保持字段为 null，不用东方财富空值或发行规模冒充。
     """
     try:
         from services.announcement_parser import get_placement_by_stock
@@ -1251,18 +1256,86 @@ def _enrich_with_local_placement(rows):
             continue
 
         local_data = get_placement_by_stock(stock_code)
-        if local_data and local_data.get('shareholder_ratio') is not None:
-            row['shareholder_ratio'] = local_data['shareholder_ratio']
-            if local_data.get('issue_size'):
-                tradable = local_data['issue_size'] * (
-                    1 - local_data['shareholder_ratio'] / 100
-                )
-                row['tradable_amount'] = round(tradable, 2)
-            if local_data.get('online_ratio') is not None:
-                row['win_rate'] = local_data['online_ratio']
-            row['_placement_source'] = 'announcement'
+        if not local_data:
+            row['shareholder_amount'] = None
+            row['shareholder_ratio'] = None
+            row['tradable_amount'] = None
+            row['placement_data_status'] = 'unavailable'
+            row['placement_data_reason'] = '未找到巨潮官方配售结果公告'
+            continue
+
+        issue_size = safe_float(row.get('issue_size')) or safe_float(local_data.get('issue_size'))
+        shareholder_amount = local_data.get('shareholder_amount')
+        if shareholder_amount is not None and issue_size > 0:
+            shareholder_ratio = round(shareholder_amount / issue_size * 100, 2)
+            row['shareholder_amount'] = shareholder_amount
+            row['shareholder_ratio'] = shareholder_ratio
+            row['tradable_amount'] = round(max(0, issue_size - shareholder_amount), 2)
+        else:
+            row['shareholder_amount'] = None
+            row['shareholder_ratio'] = None
+            row['tradable_amount'] = None
+
+        if local_data.get('online_ratio') is not None:
+            row['win_rate'] = local_data['online_ratio']
+        row['placement_data_status'] = (
+            'verified' if row['tradable_amount'] is not None else 'unavailable'
+        )
+        row['placement_data_reason'] = (
+            None if row['tradable_amount'] is not None
+            else '公告已找到但未解析到原股东优先配售合计金额'
+        )
+        row['placement_announcement_id'] = local_data.get('announcement_id')
+        row['placement_announcement_date'] = local_data.get('announce_date')
+        row['placement_source_url'] = local_data.get('source_url')
+        row['_placement_source'] = 'cninfo'
 
     return rows
+
+
+def enrich_pending_with_placement_announcements(rows, days_back=180):
+    """在配债快照后台刷新中限频同步巨潮公告，再应用本地解析结果。
+
+    该函数只应由后台刷新线程调用；用户读取请求不得直接调用公告网络 I/O。
+    """
+    global _PLACEMENT_ANNOUNCEMENT_SYNCING, _PLACEMENT_ANNOUNCEMENT_LAST_SYNC
+    rows = _enrich_with_local_placement(rows)
+    missing_codes = [
+        str(row.get('stock_code') or '').strip()
+        for row in rows
+        if row.get('placement_data_status') != 'verified'
+        and str(row.get('stock_code') or '').strip()
+    ]
+    if not missing_codes:
+        return rows
+
+    should_sync = False
+    now = time.monotonic()
+    with _PLACEMENT_ANNOUNCEMENT_SYNC_LOCK:
+        if (
+            not _PLACEMENT_ANNOUNCEMENT_SYNCING
+            and now - _PLACEMENT_ANNOUNCEMENT_LAST_SYNC >= _PLACEMENT_ANNOUNCEMENT_SYNC_INTERVAL
+        ):
+            _PLACEMENT_ANNOUNCEMENT_SYNCING = True
+            should_sync = True
+
+    if should_sync:
+        try:
+            from services.announcement_parser import sync_cb_placement_announcements
+
+            stats = sync_cb_placement_announcements(
+                days_back=days_back,
+                stock_codes=list(dict.fromkeys(missing_codes)),
+            )
+            logger.info('[Placement] 后台公告同步完成: %s', stats)
+        except Exception as exc:
+            logger.warning('[Placement] 后台公告同步失败: %s', exc)
+        finally:
+            with _PLACEMENT_ANNOUNCEMENT_SYNC_LOCK:
+                _PLACEMENT_ANNOUNCEMENT_LAST_SYNC = time.monotonic()
+                _PLACEMENT_ANNOUNCEMENT_SYNCING = False
+
+    return _enrich_with_local_placement(rows)
 
 
 def _fetch_em_pending_bonds():
@@ -1409,10 +1482,9 @@ def _fetch_em_pending_bonds():
         # 状态推导（基于日期）
         status = _get_status_from_dates(pub_start, apply_date, now)
 
-        # 首日可交易量（亿）
-        # 东财不提供股东配售率，默认等于发行规模
-        # 配售完成后由公告数据 (_enrich_with_local_placement) 覆盖
-        tradable_amount = issue_size
+        # 首日可交易量必须有官方原股东优先配售公告才能计算。
+        # 缺失时保留 null，避免把发行规模误当成首日可交易量。
+        tradable_amount = None
 
         # 配售三因子评分
         strategy_score = None
@@ -1434,7 +1506,8 @@ def _fetch_em_pending_bonds():
             ),
             'issue_size': issue_size,
             'rating': rating,
-            'shareholder_ratio': 0,  # 待配售完成后由公告数据覆盖
+            'shareholder_amount': None,
+            'shareholder_ratio': None,
             'conversion_price': conversion_price,
             'stock_price': stock_price,
             'stock_change': stock_change,
@@ -1458,7 +1531,12 @@ def _fetch_em_pending_bonds():
             'safety_pad': safety_pad,
             'stock_trend': stock_trend,
             'strategy_score': strategy_score,
-            'tradable_amount': round(tradable_amount, 2),
+            'tradable_amount': tradable_amount,
+            'placement_data_status': 'unavailable',
+            'placement_data_reason': '等待巨潮官方配售结果公告',
+            'placement_announcement_id': None,
+            'placement_announcement_date': None,
+            'placement_source_url': None,
             'strategy_rating': strategy_rating,
             'risk_level': risk_level,
             'strategy_status': 'observation',
