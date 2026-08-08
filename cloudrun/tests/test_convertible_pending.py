@@ -166,7 +166,7 @@ class PendingPlacementVisibilityTest(unittest.TestCase):
         self.assertEqual(rows[0]['expected_profit'], None)
         self.assertEqual(rows[0]['safety_pad'], None)
 
-    def test_new_listed_returns_listing_gain_issue_size_and_turnover(self):
+    def test_new_listed_returns_issue_gain_issue_size_and_turnover(self):
         class FixedDatetime(datetime):
             @classmethod
             def now(cls, tz=None):
@@ -221,33 +221,53 @@ class PendingPlacementVisibilityTest(unittest.TestCase):
 
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]['bond_code'], '123456')
-        self.assertEqual(rows[0]['listing_close'], 121)
         self.assertEqual(rows[0]['latest_close'], 125)
-        self.assertEqual(rows[0]['gain_since_listing'], 3.31)
+        self.assertEqual(rows[0]['gain_since_listing'], 28.0)
+        self.assertNotIn('listing_close', rows[0])
+        self.assertNotIn('month_base_close', rows[0])
+        self.assertNotIn('month_gain', rows[0])
         self.assertEqual(rows[0]['three_day_stage'], 2)
         self.assertEqual(rows[0]['three_day_price'], 125)
         self.assertEqual(rows[0]['three_day_gain'], 25.0)
-        self.assertEqual(rows[0]['month_base_close'], 121)
-        self.assertEqual(rows[0]['month_gain'], 3.31)
         self.assertEqual(rows[0]['issue_size'], 5.0)
         self.assertEqual(rows[0]['turnover_rate'], 12.34)
 
-    def test_new_listed_snapshot_quality_prefers_complete_gain_fields(self):
+    def test_new_listed_snapshot_quality_ignores_removed_month_gain(self):
         from services.convertible_bond import _new_listed_snapshot_quality
 
-        complete = [
+        with_legacy_month_gain = [
             {'bond_code': '113708', 'month_gain': 1.2, 'three_day_gain': 57.68},
             {'bond_code': '110102', 'month_gain': 5.6, 'three_day_gain': 66.11},
         ]
-        incomplete = [
-            {'bond_code': '113708', 'month_gain': None, 'three_day_gain': None},
-            {'bond_code': '110102', 'month_gain': None, 'three_day_gain': None},
+        without_legacy_month_gain = [
+            {'bond_code': '113708', 'three_day_gain': 57.68},
+            {'bond_code': '110102', 'three_day_gain': 66.11},
         ]
 
-        self.assertGreater(
-            _new_listed_snapshot_quality(complete),
-            _new_listed_snapshot_quality(incomplete),
+        self.assertEqual(
+            _new_listed_snapshot_quality(with_legacy_month_gain),
+            _new_listed_snapshot_quality(without_legacy_month_gain),
         )
+
+    def test_new_listed_snapshot_migrates_legacy_listing_and_month_fields(self):
+        from services.convertible_bond import _normalize_new_listed_snapshot_rows
+
+        rows = _normalize_new_listed_snapshot_rows([
+            {
+                'bond_code': '113708',
+                'price': 157.45,
+                'latest_close': 157.678,
+                'listing_close': 146.723,
+                'gain_since_listing': 7.47,
+                'month_base_close': 146.723,
+                'month_gain': 7.47,
+            }
+        ])
+
+        self.assertEqual(rows[0]['gain_since_listing'], 57.45)
+        self.assertNotIn('listing_close', rows[0])
+        self.assertNotIn('month_base_close', rows[0])
+        self.assertNotIn('month_gain', rows[0])
 
     def test_turnover_map_paginates_beyond_first_page_cap(self):
         class Response:

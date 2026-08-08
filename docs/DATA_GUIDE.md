@@ -92,14 +92,11 @@
 | `stock_name` | `stockName` | 正股名称 | 对应正股名称。 |
 | `list_date` | `listDate` | 上市日 | 当前自然年内的上市日期。 |
 | `latest_close` | `latestClose` | 最新收盘价 | 最新可验证交易日收盘价；当日仅有实时行情时可由 `price` 辅助展示。 |
-| `listing_close` | `listingClose` | 上市日收盘价 | “上市以来”涨幅基准。 |
-| `gain_since_listing` | `gainSinceListing` | 上市以来涨幅 | 以上市日收盘价为基准，单位为百分比数值。 |
-| `month_base_close` | `monthBaseClose` | 本月基准收盘价 | 本月内首个可验证交易日收盘价；若本月上市，则为上市日收盘价。 |
-| `month_gain` | `monthGain` | 本月涨幅 | 以本月内首个可验证交易日收盘价为基准，单位为百分比数值；基准不可验证时为 `null`。 |
+| `gain_since_listing` | `gainSinceListing` | 发行以来涨幅 | 以面值 100 元为基准，优先使用实时价，否则使用最近可验证收盘价；单位为百分比数值。 |
 | `three_day_price` | `threeDayPrice` | 前三日阶段价 | 上市后第 1 / 2 / 3 个交易日中已完成阶段的收盘价。 |
 | `three_day_stage` | `threeDayStage` | 前三日阶段 | 取值 1、2、3；上市未满三个交易日时展示已完成交易日阶段。 |
 | `three_day_gain` | `threeDayGain` | 前三日涨幅 | 以 100 元面值为基准，按已完成的第 1 / 2 / 3 个交易日阶段计算。 |
-| `issue_size` | `issueSize` | 剩余规模 | 取东方财富发行规模（亿元）；缺失时为 `null`，不用推断值替代。 |
+| `issue_size` | `issueSize` | 发行规模 | 取东方财富发行规模（亿元），不表示已扣除锁定份额的实时流通规模；缺失时为 `null`，不用推断值替代。 |
 | `turnover_rate` | `turnoverRate` | 换手率 | 取东方财富行情接口换手率（%）；缺失时为 `null`。 |
 
 ## LOF 连续正溢价持续性

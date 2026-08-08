@@ -260,24 +260,42 @@ def _read_new_listed_snapshot():
     try:
         payload = json.loads(_NEW_LISTED_SNAPSHOT_PATH.read_text(encoding='utf-8'))
         rows = payload.get('rows') if isinstance(payload, dict) else None
-        return rows if isinstance(rows, list) else []
+        return _normalize_new_listed_snapshot_rows(rows)
     except (FileNotFoundError, OSError, ValueError, TypeError):
         return []
 
 
+def _normalize_new_listed_snapshot_rows(rows):
+    """兼容旧快照，避免口径升级后冷启动继续返回已废弃字段。"""
+    if not isinstance(rows, list):
+        return []
+    normalized = []
+    for raw in rows:
+        if not isinstance(raw, dict):
+            continue
+        row = {
+            key: value for key, value in raw.items()
+            if key not in {'listing_close', 'month_base_close', 'month_gain'}
+        }
+        performance_price = safe_float(row.get('price')) or safe_float(row.get('latest_close'))
+        row['gain_since_listing'] = _calc_gain_pct(100, performance_price)
+        normalized.append(row)
+    return normalized
+
+
 def _new_listed_snapshot_quality(rows):
     if not isinstance(rows, list):
-        return (0, 0, 0)
+        return (0, 0)
     return (
         len(rows),
         sum(1 for row in rows if row.get('three_day_gain') is not None),
-        sum(1 for row in rows if row.get('month_gain') is not None),
     )
 
 
 def _write_new_listed_snapshot(rows):
     """原子写入今年新债快照；失败不影响主请求。"""
-    if not isinstance(rows, list) or not rows:
+    rows = _normalize_new_listed_snapshot_rows(rows)
+    if not rows:
         return
     try:
         current_rows = _read_new_listed_snapshot()
@@ -944,15 +962,8 @@ def _series_from_date(series, start_date):
     return [row for row in series or [] if row.get('date', '') >= start and row.get('close', 0) > 0]
 
 
-def _first_series_row_in_month(series, month_prefix):
-    for row in series or []:
-        if str(row.get('date', '')).startswith(month_prefix) and row.get('close', 0) > 0:
-            return row
-    return None
-
-
 def get_convertible_new_listed():
-    """获取今年上市新债列表：涨幅表现、剩余规模与换手率。"""
+    """获取今年上市新债列表：发行以来、前三日表现、发行规模与换手率。"""
     try:
         df = _merge_bond_data()
         if df is None or df.empty:
@@ -960,7 +971,6 @@ def get_convertible_new_listed():
 
         today = datetime.now(_CHINA_TZ).date()
         current_year = today.year
-        month_prefix = today.strftime('%Y-%m')
         rows = []
         missing_kline_codes = []
         turnover_map = _fetch_em_bond_turnover_map()
@@ -979,21 +989,12 @@ def get_convertible_new_listed():
             if not series:
                 missing_kline_codes.append(bond_code)
             listed_series = _series_from_date(series, list_date)
-            list_row = listed_series[0] if listed_series else None
             latest_row = listed_series[-1] if listed_series else None
             realtime_price = safe_float(row.get('price', 0))
             latest_price = latest_row.get('close') if latest_row else realtime_price or None
             latest_trade_date = latest_row.get('date') if latest_row else ''
-
-            listing_gain = (
-                _calc_gain_pct(list_row.get('close'), latest_price)
-                if list_row and latest_price else None
-            )
-            month_row = _first_series_row_in_month(series, month_prefix)
-            month_gain = (
-                _calc_gain_pct(month_row.get('close'), latest_price)
-                if month_row and latest_price else None
-            )
+            performance_price = realtime_price or latest_price
+            issue_gain = _calc_gain_pct(100, performance_price)
 
             three_day_row = None
             if listed_series:
@@ -1019,10 +1020,7 @@ def get_convertible_new_listed():
                 'price': realtime_price,
                 'latest_close': latest_price,
                 'latest_trade_date': latest_trade_date,
-                'listing_close': list_row.get('close') if list_row else None,
-                'gain_since_listing': listing_gain,
-                'month_base_close': month_row.get('close') if month_row else None,
-                'month_gain': month_gain,
+                'gain_since_listing': issue_gain,
                 'three_day_price': three_day_row.get('close') if three_day_row else None,
                 'three_day_price_date': three_day_row.get('date') if three_day_row else '',
                 'three_day_stage': three_day_stage,

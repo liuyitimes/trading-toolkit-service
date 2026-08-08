@@ -8,7 +8,7 @@
 2. 股权登记日收盘价字段命名为 `registration_close_price`。登记日后收尾价字段命名为 `post_registration_close_price`，表示股权登记日之后的第一个可验证 A 股交易日收盘价。
 3. 参与配债后总收益按“一手可转债面值 1,000 元”口径计算：`stock_leg_profit + bond_expected_profit`。其中 `stock_leg_profit = (post_registration_close_price - registration_close_price) * actual_shares_for_1_lot`，`bond_expected_profit = 1000 * placement_premium_rate / 100`。
 4. 今年上市新债接口命名为 `GET /api/v1/convertible/new-listed`，默认返回中国时区当前自然年上市的新债。涨幅字段均返回数值百分比，缺失时为 `null`。
-5. 上市以来涨幅以上市日收盘价为基准；本月涨幅以本月第一个可验证交易日收盘价为基准；上市前三日涨幅以面值 100 元为基准，取上市后第 1、2、3 个交易日中当前可获得的最新收盘价或上市当日实时价，第三个交易日收盘后冻结为第三日收盘价。
+5. 发行以来涨幅以面值 100 元为基准，优先使用实时价，实时价缺失时回退最近可验证收盘价；上市前三日涨幅以面值 100 元为基准，取上市后第 1、2、3 个交易日中当前可获得的最新收盘价或上市当日实时价，第三个交易日收盘后冻结为第三日收盘价。`issue_size` 仅表示东财发行规模，不表示扣除锁定份额后的实时流通规模。
 
 ## 非目标
 

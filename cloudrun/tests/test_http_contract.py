@@ -32,7 +32,7 @@ def test_new_listed_cold_cache_returns_snapshot_without_waiting_for_upstream(mon
             'bond_code': '113708',
             'bond_name': '曙26转债',
             'list_date': '2026-08-06',
-            'month_gain': 0.0,
+            'gain_since_listing': 46.72,
             'three_day_gain': 46.72,
             'three_day_stage': 1,
         }
