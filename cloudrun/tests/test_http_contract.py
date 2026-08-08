@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import re
 import sys
+import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -64,3 +65,69 @@ def test_new_listed_cold_cache_returns_snapshot_without_waiting_for_upstream(mon
     assert payload['data'] == snapshot
     assert payload['meta']['source'] == 'snapshot'
     assert payload['meta']['cached'] is True
+
+
+def test_heavy_endpoint_uses_persisted_snapshot_without_waiting_for_upstream(monkeypatch):
+    snapshot = [{'代码': '161725', '溢价率': 1.2}]
+    monkeypatch.setattr(backend_app.cache, 'get', lambda key: None)
+    monkeypatch.setattr(backend_app.cache, 'get_snapshot', lambda key: snapshot)
+    monkeypatch.setattr(
+        'services.cache._maybe_trigger_background_refresh',
+        lambda *args: None,
+    )
+
+    def unexpected_sync(*args, **kwargs):
+        raise AssertionError('快照命中时不应同步访问上游')
+
+    monkeypatch.setattr(backend_app.factory, 'get_with_fallback', unexpected_sync)
+
+    response = backend_app.app.test_client().get('/api/v1/lof/list')
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload['data'] == snapshot
+    assert payload['meta']['source'] == 'snapshot'
+    assert payload['meta']['cached'] is True
+
+
+def test_heavy_endpoint_returns_warming_payload_on_cold_start(monkeypatch):
+    monkeypatch.setattr(backend_app.cache, 'get', lambda key: None)
+    monkeypatch.setattr(backend_app.cache, 'get_snapshot', lambda key: None)
+    monkeypatch.setattr(
+        'services.cache._maybe_trigger_background_refresh',
+        lambda *args: None,
+    )
+    monkeypatch.setattr(
+        backend_app.factory,
+        'get_with_fallback',
+        lambda *args, **kwargs: (None, 'none'),
+    )
+
+    response = backend_app.app.test_client().get('/api/v1/convertible/signals')
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload['data'] == {
+        'double_low': [],
+        'force_redeem': [],
+        'discount': [],
+        'down_revised': [],
+    }
+    assert payload['meta']['source'] == 'warming'
+    assert payload['meta']['cached'] is True
+
+
+def test_heavy_endpoint_does_not_wait_for_background_refresh(monkeypatch):
+    snapshot = [{'代码': '161725', '溢价率': 1.2}]
+    monkeypatch.setattr(backend_app.cache, 'get', lambda key: None)
+    monkeypatch.setattr(backend_app.cache, 'get_snapshot', lambda key: snapshot)
+    monkeypatch.setattr(
+        'services.cache._maybe_trigger_background_refresh',
+        lambda *args: time.sleep(0.3),
+    )
+
+    started = time.monotonic()
+    response = backend_app.app.test_client().get('/api/v1/lof/list')
+
+    assert response.status_code == 200
+    assert time.monotonic() - started < 0.15

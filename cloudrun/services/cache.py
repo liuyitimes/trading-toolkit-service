@@ -7,6 +7,7 @@ import os
 import threading
 import time
 from datetime import datetime, time as dt_time
+from pathlib import Path
 
 logger = logging.getLogger('trading_toolkit')
 
@@ -126,19 +127,51 @@ class CacheManager:
     def __init__(self):
         self._backend = None
         self._backend_type = 'memory'
+        self._snapshot_path = Path(
+            os.environ.get(
+                'CACHE_SNAPSHOT_PATH',
+                Path(__file__).resolve().parents[1] / '.runtime' / 'api-cache.json',
+            )
+        )
+        self._snapshot_lock = threading.RLock()
+        self._snapshots = self._load_snapshots()
         self._init_backend()
+
+    def _load_snapshots(self):
+        try:
+            payload = json.loads(self._snapshot_path.read_text(encoding='utf-8'))
+            return payload if isinstance(payload, dict) else {}
+        except (FileNotFoundError, OSError, json.JSONDecodeError, TypeError):
+            return {}
+
+    def get_snapshot(self, key: str):
+        """读取跨进程保留的最近成功值，不受内存 TTL 影响。"""
+        with self._snapshot_lock:
+            entry = self._snapshots.get(key)
+            if not isinstance(entry, dict) or 'value' not in entry:
+                return None
+            return entry['value']
+
+    def _write_snapshots(self):
+        try:
+            self._snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self._snapshot_path.with_suffix('.tmp')
+            temporary.write_text(
+                json.dumps(self._snapshots, ensure_ascii=False, default=str),
+                encoding='utf-8',
+            )
+            os.replace(temporary, self._snapshot_path)
+        except (OSError, TypeError, ValueError) as exc:
+            logger.warning('[CacheSnapshot] 写入本地快照失败: %s', exc)
 
     def _init_backend(self):
         redis_url = os.environ.get('REDIS_URL', '').strip()
         if not redis_url:
-            # 无 REDIS_URL，尝试 fakeredis（开发环境）
-            try:
-                import fakeredis
-                self._backend = fakeredis.FakeRedis(decode_responses=True)
-                self._backend_type = 'fakeredis'
-                return
-            except ImportError:
-                pass
+            # 本地服务依赖进程内缓存和持久快照；不让模拟 Redis 的空键读取
+            # 影响首个用户请求的延迟。
+            self._backend = _MemoryCache()
+            self._backend_type = 'memory'
+            return
         else:
             # 有 REDIS_URL，尝试连接真实 redis
             try:
@@ -180,6 +213,13 @@ class CacheManager:
                 self._backend.set(key, value, ttl)
             else:
                 self._backend.set(key, serialized, ex=ttl)
+            if not key.endswith(':_next_refresh'):
+                with self._snapshot_lock:
+                    self._snapshots[key] = {
+                        'updated_at': time.time(),
+                        'value': value,
+                    }
+                    self._write_snapshots()
         except Exception:
             pass
 

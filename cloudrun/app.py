@@ -117,7 +117,31 @@ def log_request_end(response):
 
 # ==================== 通用数据获取 ====================
 
-def fetch_with_cache(data_type: str, method_name: str, force_refresh=False, use_swr=True, **kwargs):
+_NO_COLD_VALUE = object()
+
+
+def _schedule_cache_refresh(cache_key, fetch_func, ttl):
+    """稍后启动回源，避免 CPU 密集的解析抢占当前 HTTP 响应。"""
+    import threading
+    from services.cache import _maybe_trigger_background_refresh
+
+    timer = threading.Timer(
+        0.05,
+        _maybe_trigger_background_refresh,
+        args=(cache_key, fetch_func, ttl, 0.7),
+    )
+    timer.daemon = True
+    timer.start()
+
+
+def fetch_with_cache(
+    data_type: str,
+    method_name: str,
+    force_refresh=False,
+    use_swr=True,
+    cold_value=_NO_COLD_VALUE,
+    **kwargs,
+):
     """通用数据获取：缓存 → 数据源降级
 
     Args:
@@ -150,14 +174,24 @@ def fetch_with_cache(data_type: str, method_name: str, force_refresh=False, use_
         cached = cache.get(cache_key)
         if cached is not None:
             # 有缓存，后台异步刷新
-            from services.cache import _maybe_trigger_background_refresh
-            _maybe_trigger_background_refresh(cache_key, _fetch, ttl, 0.7)
+            _schedule_cache_refresh(cache_key, _fetch, ttl)
             return cached, 'cache', True
+
+        # 进程重启后优先返回最近一次成功值，避免用户请求等待上游。
+        snapshot = cache.get_snapshot(cache_key)
+        if snapshot is not None:
+            cache.set(cache_key, snapshot, ttl)
+            _schedule_cache_refresh(cache_key, _fetch, ttl)
+            return snapshot, 'snapshot', True
 
     # 普通模式：先查缓存，未命中则同步获取
     cached = cache.get(cache_key)
     if cached is not None:
         return cached, 'cache', True
+
+    if cold_value is not _NO_COLD_VALUE:
+        _schedule_cache_refresh(cache_key, _fetch, ttl)
+        return cold_value, 'warming', True
 
     data, source = factory.get_with_fallback(method_name, **kwargs)
     if data is not None:
@@ -178,11 +212,11 @@ def market_overview():
 
         # 可转债温度
         data, source, cached = fetch_with_cache(
-            'convertible_temperature', 'get_convertible_temperature')
+            'convertible_temperature', 'get_convertible_temperature', cold_value={})
         result['convertible_bond'] = data or {}
 
         # LOF 概览
-        data, _, _ = fetch_with_cache('lof_summary', 'get_lof_summary')
+        data, _, _ = fetch_with_cache('lof_summary', 'get_lof_summary', cold_value={})
         result['lof_fund'] = data or {}
 
         # 市场情绪
@@ -243,7 +277,16 @@ def convertible_list():
     kwargs = {k: v for k, v in kwargs.items() if v is not None}
 
     data, source, cached = fetch_with_cache(
-        'convertible_list', 'get_convertible_list', force_refresh=force, **kwargs)
+        'convertible_list',
+        'get_convertible_list',
+        force_refresh=force,
+        cold_value={
+            'total': 0,
+            'page': kwargs.get('page', 1),
+            'page_size': kwargs.get('page_size', 20),
+            'items': [],
+        },
+        **kwargs)
 
     if data is None:
         return api_error(*ErrorCode.DATA_SOURCE_ERROR)
@@ -256,7 +299,15 @@ def convertible_signals():
     """可转债信号"""
     force = request.args.get('refresh', '').lower() == 'true'
     data, source, cached = fetch_with_cache(
-        'convertible_signals', 'get_convertible_signals', force_refresh=force)
+        'convertible_signals',
+        'get_convertible_signals',
+        force_refresh=force,
+        cold_value={
+            'double_low': [],
+            'force_redeem': [],
+            'discount': [],
+            'down_revised': [],
+        })
     if data is None:
         return api_error(*ErrorCode.DATA_SOURCE_ERROR)
     return api_response(data, source=source, cached=cached)
@@ -268,7 +319,10 @@ def convertible_temperature():
     """可转债市场温度"""
     force = request.args.get('refresh', '').lower() == 'true'
     data, source, cached = fetch_with_cache(
-        'convertible_temperature', 'get_convertible_temperature', force_refresh=force)
+        'convertible_temperature',
+        'get_convertible_temperature',
+        force_refresh=force,
+        cold_value={})
     if data is None:
         return api_error(*ErrorCode.DATA_SOURCE_ERROR)
     return api_response(data, source=source, cached=cached)
@@ -383,7 +437,7 @@ def lof_list():
     """LOF 基金列表"""
     force = request.args.get('refresh', '').lower() == 'true'
     data, source, cached = fetch_with_cache(
-        'lof_list', 'get_lof_list', force_refresh=force)
+        'lof_list', 'get_lof_list', force_refresh=force, cold_value=[])
     if data is None:
         return api_error(*ErrorCode.DATA_SOURCE_ERROR)
     return api_response(data, source=source, cached=cached)
@@ -407,7 +461,7 @@ def lof_summary():
     """LOF 市场概览"""
     force = request.args.get('refresh', '').lower() == 'true'
     data, source, cached = fetch_with_cache(
-        'lof_summary', 'get_lof_summary', force_refresh=force)
+        'lof_summary', 'get_lof_summary', force_refresh=force, cold_value={})
     if data is None:
         return api_error(*ErrorCode.DATA_SOURCE_ERROR)
     return api_response(data, source=source, cached=cached)
@@ -1004,8 +1058,9 @@ def start_cache_warmup():
                 ('convertible_temperature', lambda: factory.get_with_fallback('get_convertible_temperature')[0]),
                 ('convertible_signals', lambda: factory.get_with_fallback('get_convertible_signals')[0]),
                 ('fund_flow', lambda: factory.get_with_fallback('get_fund_flow')[0]),
+                ('lof_list', lambda: factory.get_with_fallback('get_lof_list')[0]),
                 ('lof_summary', lambda: factory.get_with_fallback('get_lof_summary')[0]),
-                ('convertible_list', lambda: factory.get_with_fallback('get_convertible_list', page=1, page_size=50)[0]),
+                ('convertible_list', lambda: factory.get_with_fallback('get_convertible_list', page=1, page_size=500)[0]),
                 ('convertible_new_listed', lambda: factory.get_with_fallback('get_convertible_new_listed')[0]),
             ]
             warmup_cache(warmup_items)
