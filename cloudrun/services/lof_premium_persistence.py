@@ -354,7 +354,8 @@ def _market_symbol(code):
 
 def fetch_em_nav_history(fund_code, start_date, end_date):
     """东方财富历史单位净值（lsjz），按净值日期升序返回。"""
-    nav_rows = []
+    nav_by_date = {}
+    total_count = None
     page = 1
     while page <= _BACKFILL_MAX_PAGES:
         try:
@@ -373,22 +374,31 @@ def fetch_em_nav_history(fund_code, start_date, end_date):
             if resp.status_code != 200:
                 logger.warning('[LOF观察] %s 净值 HTTP %s', fund_code, resp.status_code)
                 break
-            entries = (resp.json().get('Data') or {}).get('LSJZList') or []
+            payload = resp.json()
+            entries = (payload.get('Data') or {}).get('LSJZList') or []
             if not entries:
                 break
+            if total_count is None:
+                total_count = max(0, int(payload.get('TotalCount') or 0))
+            before_count = len(nav_by_date)
             for entry in entries:
                 nav_date = str(entry.get('FSRQ') or '')[:10]
                 nav = safe_float(entry.get('DWJZ', 0))
                 if nav_date and nav > 0:
-                    nav_rows.append({'date': nav_date, 'nav': nav})
-            if len(entries) < _BACKFILL_PAGE_SIZE:
+                    nav_by_date[nav_date] = nav
+            if total_count and len(nav_by_date) >= total_count:
+                break
+            # 上游可能静默限制 pageSize；不能用返回条数判断是否还有下一页。
+            if len(nav_by_date) == before_count:
                 break
             page += 1
         except Exception as exc:
             logger.warning('[LOF观察] %s 历史净值获取失败: %s', fund_code, exc)
             break
-    nav_rows.sort(key=lambda item: item['date'])
-    return nav_rows
+    return [
+        {'date': nav_date, 'nav': nav}
+        for nav_date, nav in sorted(nav_by_date.items())
+    ]
 
 
 def fetch_tencent_kline_daily(fund_code, start_date, end_date, as_of=None):
@@ -435,7 +445,7 @@ def _job_key(job_type, scope_year):
     return f'{job_type}:{scope_year or ""}'
 
 
-def acquire_job(db, job_type, scope_year=None):
+def acquire_job(db, job_type, scope_year=None, restart=False):
     """创建或取回任务行；返回 None 表示同类任务已在运行或不可用。"""
     job = db.execute(
         select(LofPremiumJob).where(
@@ -461,7 +471,7 @@ def acquire_job(db, job_type, scope_year=None):
         if not lock.acquire(blocking=False):
             return None
 
-    if job.status == 'running':
+    if job.status == 'running' and not restart:
         _release_job(db, key)
         return None
     job.status = 'running'
@@ -500,11 +510,11 @@ def finish_job(db, job, status='succeeded', error=None, success_count=0, failure
 # ==================== 回补与日度采集 ====================
 
 
-def run_backfill(db, year=None, fund_codes=None, as_of=None):
+def run_backfill(db, year=None, fund_codes=None, as_of=None, restart=False):
     """当前自然年历史回补：东方财富净值与腾讯收盘价按同日配对写入观测。"""
     as_of = as_of or _today()
     year = year or as_of.year
-    job = acquire_job(db, 'backfill', year)
+    job = acquire_job(db, 'backfill', year, restart=restart)
     if job is None:
         return {'acquired': False}
 
@@ -523,6 +533,11 @@ def run_backfill(db, year=None, fund_codes=None, as_of=None):
         fund_codes = [code for code in fund_codes if str(code).strip()]
 
         cursor_state = {}
+        if restart:
+            job.cursor = None
+            job.success_count = 0
+            job.failure_count = 0
+            db.flush()
         if job.cursor:
             try:
                 cursor_state = json.loads(job.cursor)
@@ -600,11 +615,11 @@ def run_backfill(db, year=None, fund_codes=None, as_of=None):
         return {'acquired': True, 'error': str(exc)}
 
 
-def run_daily_capture(db, as_of=None):
+def run_daily_capture(db, as_of=None, fund_codes=None, restart=False):
     """收盘后日度采集：仅写入当日已有同日可比净值与价格的观测。"""
     as_of = as_of or _today()
     year = as_of.year
-    job = acquire_job(db, 'daily_capture', year)
+    job = acquire_job(db, 'daily_capture', year, restart=restart)
     if job is None:
         return {'acquired': False}
 
@@ -628,6 +643,12 @@ def run_daily_capture(db, as_of=None):
         from services.lof_fund import _fetch_em_lof_rows, _fetch_tencent_quotes
 
         universe = _fetch_em_lof_rows()
+        requested_codes = {str(code).strip() for code in (fund_codes or []) if str(code).strip()}
+        if requested_codes:
+            universe = [
+                row for row in universe
+                if str(row.get('f12') or '').strip() in requested_codes
+            ]
         quotes = _fetch_tencent_quotes(universe)
         written = 0
         pending = 0

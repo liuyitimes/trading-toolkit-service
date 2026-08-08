@@ -30,6 +30,24 @@ def cli():
     """LOF 溢价观测任务命令。"""
 
 
+def _resolve_fund_codes(fund_codes, top):
+    explicit_codes = [str(code).strip() for code in fund_codes if str(code).strip()]
+    if explicit_codes:
+        return explicit_codes
+
+    from services.lof_fund import get_lof_list
+
+    candidates = sorted(
+        (
+            item for item in get_lof_list()
+            if item.get('报价有效') and item.get('代码')
+        ),
+        key=lambda item: float(item.get('溢价率') or 0),
+        reverse=True,
+    )
+    return [str(item['代码']) for item in candidates[:top]]
+
+
 @cli.command('calendar-import')
 @click.option('--year', type=int, required=True, help='要导入的年份')
 def calendar_import(year):
@@ -44,24 +62,36 @@ def calendar_import(year):
 @cli.command('backfill')
 @click.option('--year', type=int, default=None, help='回补年份，默认当前自然年')
 @click.option('--fund', 'fund_codes', multiple=True, help='仅回补指定基金，可多次传入')
-def backfill(year, fund_codes):
+@click.option('--top', type=click.IntRange(min=1), default=20, show_default=True, help='未指定基金时按当前溢价率选取数量')
+@click.option('--restart', is_flag=True, help='从首只基金重新执行幂等回补')
+def backfill(year, fund_codes, top, restart):
     """执行当前自然年历史回补（东方财富净值与腾讯收盘价同日配对）。"""
     init_db()
     with SessionLocal() as db:
         result = persistence.run_backfill(
             db,
             year=year,
-            fund_codes=list(fund_codes) or None,
+            fund_codes=_resolve_fund_codes(fund_codes, top),
+            restart=restart,
         )
     click.echo(json.dumps(result, ensure_ascii=False))
 
 
 @cli.command('capture')
-def capture():
+@click.option('--date', 'capture_date', type=click.DateTime(formats=['%Y-%m-%d']), help='补采指定交易日')
+@click.option('--fund', 'fund_codes', multiple=True, help='仅补采指定基金，可多次传入')
+@click.option('--top', type=click.IntRange(min=1), default=20, show_default=True, help='未指定基金时按当前溢价率选取数量')
+@click.option('--restart', is_flag=True, help='接管中断后遗留的运行状态')
+def capture(capture_date, fund_codes, top, restart):
     """执行收盘后日度采集（仅在当日为交易日且已有同日可比净值时写入）。"""
     init_db()
     with SessionLocal() as db:
-        result = persistence.run_daily_capture(db)
+        result = persistence.run_daily_capture(
+            db,
+            as_of=capture_date.date() if capture_date else None,
+            fund_codes=_resolve_fund_codes(fund_codes, top),
+            restart=restart,
+        )
     click.echo(json.dumps(result, ensure_ascii=False))
 
 

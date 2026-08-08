@@ -341,6 +341,34 @@ class BackfillAndCaptureTest(unittest.TestCase):
         )['161725']
         self.assertEqual(persistence['status'], 'unavailable')
 
+    def test_daily_capture_limits_to_requested_funds(self):
+        db = _session()
+        _seed_calendar(db)
+        universe = [
+            {'f12': '161725', 'f13': '0', 'f14': '目标LOF'},
+            {'f12': '161726', 'f13': '0', 'f14': '非目标LOF'},
+        ]
+        quote = [''] * 82
+        quote[3] = '1.1'
+        quote[61] = 'LOF'
+        quotes = {'161725': quote, '161726': quote}
+        with (
+            patch('services.lof_fund._fetch_em_lof_rows', return_value=universe),
+            patch('services.lof_fund._fetch_tencent_quotes', return_value=quotes),
+            patch(
+                'services.lof_premium_persistence.fetch_em_nav_history',
+                return_value=[{'date': '2026-08-06', 'nav': 1.0}],
+            ) as fetch_nav,
+        ):
+            result = run_daily_capture(
+                db,
+                as_of=date(2026, 8, 6),
+                fund_codes=['161725'],
+            )
+
+        self.assertEqual(result['written'], 1)
+        self.assertEqual(fetch_nav.call_count, 1)
+
     def test_latest_nav_dates_returns_actual_published_date(self):
         db = _session()
         _seed_calendar(db)
