@@ -95,6 +95,32 @@ def capture(capture_date, fund_codes, top, restart):
     click.echo(json.dumps(result, ensure_ascii=False))
 
 
+@cli.command('execution-rules-backfill')
+@click.option('--restart', is_flag=True, help='重新执行全量有效 LOF 规则建库')
+def execution_rules_backfill(restart):
+    """全量建立 LOF 场内规则证据库，不以经验规则补全缺失字段。"""
+    from services.lof_execution_rules import run_execution_rules_backfill
+    from services.lof_fund import _fetch_em_lof_rows
+
+    init_db()
+    with SessionLocal() as db:
+        result = run_execution_rules_backfill(db, _fetch_em_lof_rows(), restart=restart)
+    click.echo(json.dumps(result, ensure_ascii=False))
+
+
+@cli.command('execution-rules-status')
+@click.option('--top', type=click.IntRange(min=1), default=20, show_default=True, help='按当前溢价率刷新的基金数量')
+def execution_rules_status(top):
+    """刷新当前溢价前列 LOF 的场内申赎开闭状态。"""
+    from services.lof_execution_rules import run_execution_status_refresh
+    from services.lof_fund import get_lof_list
+
+    init_db()
+    with SessionLocal() as db:
+        result = run_execution_status_refresh(db, get_lof_list(), top=top)
+    click.echo(json.dumps(result, ensure_ascii=False))
+
+
 @cli.command('status')
 def status():
     """展示日历、观测与任务状态。"""

@@ -61,6 +61,7 @@ def normalize_lof(row: dict) -> dict:
         'five_day_avg_turnover': row.get('近5日平均成交额'),
         'verification_evidence': row.get('规则证据') or {},
         'manual_override_active': bool(row.get('人工覆盖有效')),
+        'execution': row.get('场内规则') or {},
     }
 
 

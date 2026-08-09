@@ -7,6 +7,7 @@
 
 import models.convertible_timeline  # noqa: F401
 import models.database  # noqa: F401
+import models.lof_execution  # noqa: F401
 import models.lof_premium  # noqa: F401
 import models.placement  # noqa: F401
 import models.user  # noqa: F401

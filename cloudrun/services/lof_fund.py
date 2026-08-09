@@ -475,6 +475,10 @@ def _parse_row(row, quote_values, rule, fetched_at, nav_date=None):
         '交易路径已验证': rule['trade_path_verified'],
         '规则证据': rule['evidence'],
         '人工覆盖有效': rule['manual_override_active'],
+        '场内规则': {
+            'settlement_timing': rule.get('settlement_timing'),
+            'minimum_order': rule.get('minimum_order'),
+        },
         '近5日平均成交额': None,
     }
 
@@ -519,16 +523,32 @@ def get_lof_list():
     rows = _fetch_em_lof_rows()
     quotes = _fetch_tencent_quotes(rows)
     rules = _load_execution_rules()
+    database_rules = {}
+    try:
+        from models.database import SessionLocal
+        from services.lof_execution_rules import resolve_execution_rules
+
+        with SessionLocal() as db:
+            database_rules = resolve_execution_rules(
+                db,
+                [str(row.get('f12') or '') for row in rows],
+                now=fetched_at,
+            )
+    except Exception as exc:
+        logger.warning('[LOF] 场内规则库读取失败，回退兼容规则：%s', exc)
     result = []
     for row in rows:
         code = str(row.get('f12') or '')
         quote_values = quotes.get(code)
         if not code or not quote_values:
             continue
+        rule = database_rules.get(code)
+        if not rule or not rule.get('has_record'):
+            rule = _resolve_execution_rule(code, fetched_at, rules)
         item = _parse_row(
             row,
             quote_values,
-            _resolve_execution_rule(code, fetched_at, rules),
+            rule,
             fetched_at,
         )
         # The market-board directory is only a universe. Tencent's explicit
