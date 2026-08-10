@@ -12,6 +12,23 @@ import app as backend_app
 CST = timezone(timedelta(hours=8))
 
 
+def test_market_overview_refresh_forces_all_components(monkeypatch):
+    calls = []
+
+    def fake_fetch(data_type, method_name, **kwargs):
+        calls.append((data_type, method_name, kwargs.get('force_refresh')))
+        return {}, 'direct', False
+
+    monkeypatch.setattr(backend_app, 'fetch_with_cache', fake_fetch)
+
+    response = backend_app.app.test_client().get(
+        '/api/v1/market/overview?refresh=true'
+    )
+
+    assert response.status_code == 200
+    assert [call[2] for call in calls] == [True, True, True, True]
+
+
 def _seed_lof_execution_db():
     """In-memory registry: SH generic rules, one stale-status fund, one SZ gap."""
     from sqlalchemy import create_engine

@@ -221,23 +221,28 @@ def market_calendar():
 def market_overview():
     """综合市场概览"""
     try:
+        force = request.args.get('refresh', '').lower() == 'true'
         result = {}
 
         # 可转债温度
         data, source, cached = fetch_with_cache(
-            'convertible_temperature', 'get_convertible_temperature', cold_value={})
+            'convertible_temperature', 'get_convertible_temperature',
+            force_refresh=force, cold_value={})
         result['convertible_bond'] = data or {}
 
         # LOF 概览
-        data, _, _ = fetch_with_cache('lof_summary', 'get_lof_summary', cold_value={})
+        data, _, _ = fetch_with_cache(
+            'lof_summary', 'get_lof_summary', force_refresh=force, cold_value={})
         result['lof_fund'] = data or {}
 
         # 市场情绪
-        data, _, _ = fetch_with_cache('market_sentiment', 'get_market_sentiment')
+        data, _, _ = fetch_with_cache(
+            'market_sentiment', 'get_market_sentiment', force_refresh=force)
         result['market_sentiment'] = data or {}
 
         # 资金流向
-        data, _, _ = fetch_with_cache('fund_flow', 'get_fund_flow')
+        data, _, _ = fetch_with_cache(
+            'fund_flow', 'get_fund_flow', force_refresh=force)
         result['fund_flow'] = data or {}
 
         return api_response(result, source=source, cached=cached)
