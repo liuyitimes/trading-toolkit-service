@@ -11,6 +11,8 @@
 
 仓库根目录的 `openspec/` 是当前受支持后端行为的唯一事实来源。修改后端行为前，须阅读相关基线规范，并遵循 `openspec/README.md`。
 
+每次开始功能开发、修复或重构前，必须先执行 `git fetch --prune origin`，再用 `git rev-list --left-right --count HEAD...origin/<当前分支>` 确认本地与远程的领先/落后关系。远程存在未整合提交时，必须先完成安全整合并解决冲突，再开始代码修改；不得基于过期远程引用直接开发。
+
 同时影响 Vue 应用的后端变更，必须在独立版本管理的 `trading-toolkit-web` 仓库中创建同名的配套 OpenSpec 变更。保持 HTTP 契约一致，但本仓库仅记录后端实现工作。
 
 ### 问题跟踪
