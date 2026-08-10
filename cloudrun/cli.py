@@ -134,6 +134,23 @@ def subscriptions_refresh(refresh_date):
     click.echo(json.dumps(result, ensure_ascii=False))
 
 
+@cli.command('execution-rules-incremental')
+@click.option('--input', 'input_path', type=click.Path(exists=True, dir_okay=False, path_type=str), required=True, help='已审核规则证据 JSON 数组')
+@click.option('--restart', is_flag=True, help='从保存进度接管中断任务')
+def execution_rules_incremental(input_path, restart):
+    """导入公告/合同/产品页的结构化场内规则证据，不猜测缺失字段。"""
+    from services.lof_execution_rules import run_execution_rules_incremental
+
+    with open(input_path, 'r', encoding='utf-8') as source_file:
+        items = json.load(source_file)
+    if not isinstance(items, list):
+        raise click.UsageError('--input 必须是规则证据对象数组')
+    init_db()
+    with SessionLocal() as db:
+        result = run_execution_rules_incremental(db, items, restart=restart)
+    click.echo(json.dumps(result, ensure_ascii=False))
+
+
 @cli.command('status')
 def status():
     """展示日历、观测与任务状态。"""

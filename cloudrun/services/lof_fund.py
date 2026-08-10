@@ -621,12 +621,12 @@ def get_lof_list():
     database_rules = {}
     try:
         from models.database import SessionLocal
-        from services.lof_execution_rules import resolve_execution_rules
+        from services.lof_execution_rules import execution_rule_key, resolve_execution_rules
 
         with SessionLocal() as db:
             database_rules = resolve_execution_rules(
                 db,
-                [str(row.get('f12') or '') for row in rows],
+                rows,
                 now=fetched_at,
             )
     except Exception as exc:
@@ -637,7 +637,10 @@ def get_lof_list():
         quote_values = quotes.get(code)
         if not code or not quote_values:
             continue
-        rule = database_rules.get(code)
+        rule = database_rules.get(execution_rule_key(
+            code, row.get('f13') or row.get('exchange') or row.get('交易所'),
+            row.get('share_class') or row.get('份额类别') or 'listed',
+        ))
         if not rule or not rule.get('has_record'):
             rule = _resolve_execution_rule(code, fetched_at, rules)
         item = _parse_row(

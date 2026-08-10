@@ -13,11 +13,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import models  # noqa: F401
 from models.database import Base
-from models.lof_execution import LofExecutionEvidence, LofExecutionFund, LofExecutionRule
+from models.lof_execution import LofExecutionEvidence, LofExecutionFund, LofExecutionJob, LofExecutionRule
+from models.lof_premium import TradingCalendar
 from services.lof_execution_rules import (
     resolve_execution_rules,
     run_execution_rules_backfill,
     run_execution_status_refresh,
+    derive_trading_timing,
+    execution_rule_key,
+    ingest_execution_rule_evidence,
+    run_execution_rules_incremental,
+    upsert_fund_rule_version,
 )
 
 
@@ -120,9 +126,78 @@ class LofExecutionRulesTest(unittest.TestCase):
             fetcher=sse_fetcher,
         )
         self.assertEqual(db.query(LofExecutionFund).filter_by(fund_code='501001').count(), 2)
+        resolved = resolve_execution_rules(db, [{'f12': '501001', 'f13': '1', 'share_class': 'A'}])
+        self.assertIn(execution_rule_key('501001', 'sh', 'A'), resolved)
+        self.assertNotIn('501001', resolved)
+
+    def test_new_special_rule_closes_old_version(self):
+        db = session()
+        fund = LofExecutionFund(fund_code='501001', exchange='sh', share_class='listed')
+        evidence_a = LofExecutionEvidence(source_kind='manager_announcement', source_identifier='old', source_title='旧公告', source_url='https://example.test/old', applies_to='fund_code')
+        evidence_b = LofExecutionEvidence(source_kind='manager_announcement', source_identifier='new', source_title='新公告', source_url='https://example.test/new', applies_to='fund_code')
+        db.add_all([fund, evidence_a, evidence_b]); db.flush()
+        upsert_fund_rule_version(db, fund, evidence_a, 'subscription_confirmation', 'T+1', date(2026, 1, 1), 100)
+        upsert_fund_rule_version(db, fund, evidence_b, 'subscription_confirmation', 'T+2', date(2026, 2, 1), 100, replaces_previous=True)
+        db.commit()
+        self.assertEqual(resolve_execution_rules(db, ['501001'], now=datetime(2026, 2, 2))['501001']['settlement_timing']['subscription_confirmation']['timing_text'], 'T+2')
+
+    def test_trading_calendar_derives_timing_without_weekend_guessing(self):
+        db = session()
+        db.add_all([TradingCalendar(calendar_date=date(2026, 1, 2), is_trading_day=True, source_url='x', source_version='x'), TradingCalendar(calendar_date=date(2026, 1, 3), is_trading_day=False, source_url='x', source_version='x'), TradingCalendar(calendar_date=date(2026, 1, 5), is_trading_day=True, source_url='x', source_version='x')]); db.commit()
+        self.assertEqual(derive_trading_timing(db, date(2026, 1, 2), date(2026, 1, 5)), 'T+1')
+
+    def test_incremental_announcement_is_versioned_and_keeps_auditable_source(self):
+        db = session()
+        fund = LofExecutionFund(fund_code='501001', exchange='sh', share_class='listed')
+        db.add(fund)
+        old = LofExecutionEvidence(source_kind='special_announcement', source_identifier='old', source_title='旧公告', source_url='https://example.test/old', applies_to='fund_code')
+        db.add(old); db.flush()
+        upsert_fund_rule_version(db, fund, old, 'subscription_confirmation', 'T+1', date(2026, 1, 1), 100)
+        ingest_execution_rule_evidence(db, {
+            'fund_code': '501001', 'exchange': 'sh', 'share_class': 'listed',
+            'effective_from': '2026-02-01',
+            'source': {
+                'kind': 'special_announcement', 'identifier': 'new', 'title': '新公告',
+                'url': 'https://example.test/new', 'published_at': '2026-01-30',
+                'excerpt': '501001 场内上市份额申购确认由 T+1 调整为 T+2。',
+                'applies_to': 'fund_code', 'channel': 'on_exchange',
+                'fund_code': '501001', 'exchange': 'sh', 'share_class': 'listed',
+            },
+            'fields': {'subscription_confirmation': {'value_text': 'T+2', 'replaces_previous': True}},
+        })
+        db.commit()
+        rule = resolve_execution_rules(db, ['501001'], now=datetime(2026, 2, 2))['501001']
+        self.assertEqual(rule['settlement_timing']['subscription_confirmation']['timing_text'], 'T+2')
+        self.assertEqual(db.query(LofExecutionRule).filter_by(evidence_id=old.id).one().effective_to, date(2026, 1, 31))
+
+    def test_incremental_job_resumes_from_saved_cursor(self):
+        db = session()
+        broken = [{
+            'fund_code': '501001', 'exchange': 'sh', 'effective_from': '2026-02-01',
+            'source': {'kind': 'special_announcement', 'identifier': 'bad', 'title': '缺 URL'},
+            'fields': {'subscription_confirmation': {'value_text': 'T+2'}},
+        }]
+        failed = run_execution_rules_incremental(db, broken)
+        self.assertFalse(failed['acquired'])
+        job = db.query(LofExecutionJob).filter_by(job_type='rule_incremental').one()
+        self.assertEqual(job.cursor, '{"next_index": 0}')
+        repaired = [{
+            'fund_code': '501001', 'exchange': 'sh', 'effective_from': '2026-02-01',
+            'source': {
+                'kind': 'special_announcement', 'identifier': 'fixed', 'title': '修复', 'url': 'https://example.test/fixed',
+                'excerpt': '501001 场内上市份额申购确认调整为 T+2。', 'applies_to': 'fund_code', 'channel': 'on_exchange',
+                'fund_code': '501001', 'exchange': 'sh', 'share_class': 'listed',
+            },
+            'fields': {'subscription_confirmation': {'value_text': 'T+2'}},
+        }]
+        resumed = run_execution_rules_incremental(db, repaired, restart=True)
+        self.assertTrue(resumed['acquired'])
+        self.assertIsNone(job.cursor)
 
     def test_status_refresh_only_requests_ranked_top_funds(self):
         db = session()
+        db.add(TradingCalendar(calendar_date=date(2026, 8, 10), is_trading_day=True, source_url='x', source_version='x'))
+        db.commit()
         calls = []
 
         def getter(_url, **kwargs):
@@ -137,6 +212,7 @@ class LofExecutionRulesTest(unittest.TestCase):
             ],
             getter=getter,
             top=1,
+            now=datetime(2026, 8, 10, 16, 0),
         )
 
         resolved = resolve_execution_rules(db, ['501001'])['501001']
@@ -144,3 +220,11 @@ class LofExecutionRulesTest(unittest.TestCase):
         self.assertEqual(calls, ['501001'])
         self.assertTrue(resolved['subscription_open'])
         self.assertEqual(resolved['subscription_status'], '开放申购')
+
+    def test_status_refresh_refuses_holiday_or_pre_close_state(self):
+        db = session()
+        db.add(TradingCalendar(calendar_date=date(2026, 8, 10), is_trading_day=False, source_url='x', source_version='x'))
+        db.commit()
+        result = run_execution_status_refresh(db, [], now=datetime(2026, 8, 10, 16, 0))
+        self.assertFalse(result['acquired'])
+        self.assertIn('交易日', result['reason'])
