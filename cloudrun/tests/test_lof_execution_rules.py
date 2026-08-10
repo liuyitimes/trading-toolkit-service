@@ -109,6 +109,18 @@ class LofExecutionRulesTest(unittest.TestCase):
         self.assertEqual(resolved['settlement_timing']['subscription_confirmation']['status'], 'unavailable')
         self.assertEqual(resolved['settlement_timing']['subscription_confirmation']['reason'], '同优先级规则冲突')
 
+    def test_same_code_different_share_class_stays_isolated(self):
+        db = session()
+        run_execution_rules_backfill(
+            db,
+            [
+                {'f12': '501001', 'f13': '1', 'f14': 'LOF A', 'share_class': 'A'},
+                {'f12': '501001', 'f13': '1', 'f14': 'LOF C', 'share_class': 'C'},
+            ],
+            fetcher=sse_fetcher,
+        )
+        self.assertEqual(db.query(LofExecutionFund).filter_by(fund_code='501001').count(), 2)
+
     def test_status_refresh_only_requests_ranked_top_funds(self):
         db = session()
         calls = []

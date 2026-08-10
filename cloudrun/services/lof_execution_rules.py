@@ -68,13 +68,18 @@ def _upsert_fund(db, row):
     if not code:
         return None
     exchange = _exchange_name(row.get('f13') or row.get('exchange') or row.get('交易所'))
-    fund = db.execute(select(LofExecutionFund).where(LofExecutionFund.fund_code == code)).scalar_one_or_none()
+    share_class = str(row.get('share_class') or row.get('份额类别') or 'listed').strip() or 'listed'
+    fund = db.execute(select(LofExecutionFund).where(
+        LofExecutionFund.fund_code == code,
+        LofExecutionFund.exchange == exchange,
+        LofExecutionFund.share_class == share_class,
+    )).scalar_one_or_none()
     if fund is None:
         fund = LofExecutionFund(fund_code=code, exchange=exchange)
         db.add(fund)
     fund.exchange = exchange
     fund.fund_name = str(row.get('f14') or row.get('name') or row.get('名称') or fund.fund_name or '').strip() or None
-    fund.share_class = 'listed'
+    fund.share_class = share_class
     return fund
 
 
@@ -252,10 +257,10 @@ def fetch_em_status(fund_code, getter=requests.get):
     }
 
 
-def run_execution_status_refresh(db, ranked_universe, getter=requests.get, top=20):
+def run_execution_status_refresh(db, ranked_universe, getter=requests.get, top=20, restart=False):
     """只刷新启动时当前溢价前 20 的当日开闭状态。"""
     job = _find_or_create_job(db, 'status_refresh')
-    if job.status == 'running':
+    if job.status == 'running' and not restart:
         return {'acquired': False, 'reason': '任务正在运行'}
     job.status = 'running'
     job.attempt_count += 1

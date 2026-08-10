@@ -34,9 +34,9 @@ def upgrade() -> None:
         sa.Column('created_at', sa.DateTime(), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=True),
         sa.Column('updated_at', sa.DateTime(), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=True),
         sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('fund_code'),
+        sa.UniqueConstraint('fund_code', 'exchange', 'share_class', name='uq_lof_execution_fund_identity'),
     )
-    op.create_index(op.f('ix_lof_execution_fund_fund_code'), 'lof_execution_fund', ['fund_code'], unique=True)
+    op.create_index(op.f('ix_lof_execution_fund_fund_code'), 'lof_execution_fund', ['fund_code'], unique=False)
     op.create_index(op.f('ix_lof_execution_fund_exchange'), 'lof_execution_fund', ['exchange'], unique=False)
     op.create_table(
         'lof_execution_evidence',

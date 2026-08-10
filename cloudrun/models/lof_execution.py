@@ -11,7 +11,7 @@ class LofExecutionFund(Base):
     __tablename__ = 'lof_execution_fund'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    fund_code = Column(String(20), nullable=False, unique=True, index=True)
+    fund_code = Column(String(20), nullable=False, index=True)
     fund_name = Column(String(200), nullable=True)
     exchange = Column(String(10), nullable=False, index=True)
     share_class = Column(String(80), nullable=False, default='listed')
@@ -23,6 +23,10 @@ class LofExecutionFund(Base):
     status_source_url = Column(String(1000), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint('fund_code', 'exchange', 'share_class', name='uq_lof_execution_fund_identity'),
+    )
 
 
 class LofExecutionEvidence(Base):
