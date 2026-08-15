@@ -45,6 +45,7 @@ project.private.config.json
 # Database
 *.db
 cloudrun/data/convertible_new_listed.json
+cloudrun/data/lof_daily_subscription_records.json
 cloudrun/.runtime/
 
 # Test artifacts

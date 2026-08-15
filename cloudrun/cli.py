@@ -121,6 +121,18 @@ def execution_rules_status(top):
     click.echo(json.dumps(result, ensure_ascii=False))
 
 
+@cli.command('subscriptions-refresh')
+@click.option('--date', 'refresh_date', type=click.DateTime(formats=['%Y-%m-%d']), help='指定采集日期（默认当前时刻）')
+def subscriptions_refresh(refresh_date):
+    """刷新 LOF 每日净申购审计记录（东财份额变动 + 腾讯单位净值）。"""
+    from datetime import timezone, timedelta
+    from services.lof_fund import refresh_daily_subscription_records
+
+    now = refresh_date.replace(tzinfo=timezone(timedelta(hours=8))) if refresh_date else None
+    result = refresh_daily_subscription_records(now)
+    click.echo(json.dumps(result, ensure_ascii=False))
+
+
 @cli.command('status')
 def status():
     """展示日历、观测与任务状态。"""

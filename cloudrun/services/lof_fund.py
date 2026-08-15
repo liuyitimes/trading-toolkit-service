@@ -277,6 +277,101 @@ def _summarize_daily_subscriptions(records, now=None):
     }
 
 
+_SUBSCRIPTION_KEEP_DAYS = 10
+_SUBSCRIPTION_FLOW_ANOMALY_RATIO = 0.02
+
+
+def _collect_daily_subscription_records(now=None):
+    """Build dated, auditable net-subscription records from the delayed board and Tencent NAV.
+
+    ``f20`` is the LOF's total shares and ``f84`` its same-day net share change
+    (positive = net subscription) in the Eastmoney LOF directory. Tencent's
+    field 81 is the latest unit NAV published by the fund company. Records are
+    dated with the latest trading weekday: the board updates intraday and the
+    nightly refresh overwrites the same date idempotently.
+    """
+    now = now or _now()
+    share_date = _latest_trading_weekday(now).isoformat()
+    rows = _fetch_em_lof_rows()
+    quotes = _fetch_tencent_quotes(rows)
+    records = []
+    rejected = 0
+    flagged = 0
+    for row in rows:
+        code = str(row.get('f12') or '')
+        total_shares = safe_float(row.get('f20'))
+        net_change = safe_float(row.get('f84'))
+        values = quotes.get(code) or []
+        nav = safe_float(values[81] if len(values) > 81 else 0)
+        if not code or net_change <= 0 or total_shares <= 0 or nav <= 0:
+            rejected += 1
+            continue
+        # Share splits / conversions distort the same-day flow: keep such rows
+        # out of the auditable store instead of recording a misleading number.
+        if abs(net_change) > total_shares * _SUBSCRIPTION_FLOW_ANOMALY_RATIO:
+            flagged += 1
+            logger.warning(
+                '[LOF] share flow anomaly skipped %s: net=%s total=%s',
+                code, net_change, total_shares,
+            )
+            continue
+        exchange = 'sh' if str(row.get('f13')) == '1' else 'sz'
+        records.append({
+            'fund_code': code,
+            'fund_name': str(row.get('f14') or '').strip(),
+            'share_class': 'A',
+            'share_date': share_date,
+            'share_unit': 'shares',
+            'net_share_change': int(net_change),
+            'nav': round(nav, 4),
+            'nav_date': share_date,
+            'source_url': f'{_TENCENT_QUOTE_URL}{exchange}{code}',
+            'source_name': '腾讯财经基金行情（最新单位净值）',
+            'retrieved_at': now.isoformat(),
+            'non_subscription_adjustments_excluded': True,
+        })
+    return records, {
+        'share_date': share_date,
+        'total_rows': len(rows),
+        'accepted': len(records),
+        'rejected': rejected,
+        'flagged': flagged,
+    }
+
+
+def _save_daily_subscription_records(records):
+    """Merge dated records into the auditable store, keeping only recent days."""
+    existing = _load_daily_subscription_records()
+    merged = {
+        f"{record.get('share_date')}|{record.get('fund_code')}": record
+        for record in existing + records
+    }
+    ordered = sorted(
+        merged.values(),
+        key=lambda record: str(record.get('share_date') or ''),
+        reverse=True,
+    )
+    kept = []
+    dates = []
+    for record in ordered:
+        date = str(record.get('share_date') or '')
+        if date not in dates:
+            dates.append(date)
+        if len(dates) <= _SUBSCRIPTION_KEEP_DAYS:
+            kept.append(record)
+    _DAILY_SUBSCRIPTIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with _DAILY_SUBSCRIPTIONS_FILE.open('w', encoding='utf-8') as store:
+        json.dump({'records': kept}, store, ensure_ascii=False, indent=2)
+    return {'stored': len(kept), 'days_kept': dates[:_SUBSCRIPTION_KEEP_DAYS]}
+
+
+def refresh_daily_subscription_records(now=None):
+    """Refresh the auditable daily net-subscription store; returns a JSON-safe summary."""
+    records, stats = _collect_daily_subscription_records(now)
+    stats.update(_save_daily_subscription_records(records))
+    return stats
+
+
 def _resolve_execution_rule(code, now=None, rules=None):
     """Return the dated, field-level evidence for a fund's execution path."""
     now = now or _now()
@@ -389,7 +484,7 @@ def _fetch_em_lof_rows():
         'invt': 2,
         'fid': 'f3',
         'fs': _LOF_BOARD,
-        'fields': 'f12,f13,f14',
+        'fields': 'f12,f13,f14,f20,f84',
     }
     result = []
     total = None
