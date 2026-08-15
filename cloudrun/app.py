@@ -203,6 +203,19 @@ def fetch_with_cache(
 
 # ==================== 市场概览 API ====================
 
+@app.route('/api/v1/market/calendar')
+@limit(60)
+def market_calendar():
+    """财经日历：新股申购/上市 + 可转债申购"""
+    force = request.args.get('refresh', '').lower() == 'true'
+    data, source, cached = fetch_with_cache(
+        'market_calendar', 'get_market_calendar', force_refresh=force,
+        cold_value={'events': []})
+    if data is None:
+        return api_error(*ErrorCode.DATA_SOURCE_ERROR)
+    return api_response(data, source=source, cached=cached)
+
+
 @app.route('/api/v1/market/overview')
 @limit(60)
 def market_overview():

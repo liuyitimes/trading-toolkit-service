@@ -40,6 +40,7 @@ from services.hk_ipo import (
     get_hk_ipo_detail as _raw_hk_ipo_detail,
 )
 from services.http_client import sina_get, em_get, legu_get, ths_get
+from services.market_calendar import get_market_calendar as _raw_market_calendar
 from services.normalizer import normalize_lof_list
 from utils.convert import safe_float
 
@@ -441,6 +442,14 @@ class DirectSource(BaseDataSource):
             return {}
 
     # ---- 市场情绪 ----
+
+    def get_market_calendar(self) -> dict:
+        try:
+            result = _raw_market_calendar()
+            return result if result else {'events': []}
+        except Exception as e:
+            logger.warning(f'[DirectSource] get_market_calendar 失败: {e}')
+            return {'events': []}
 
     def get_market_sentiment(self) -> dict:
         """直连新浪指数 + 乐咕赚钱效应，计算市场情绪分数。
