@@ -51,6 +51,7 @@ def normalize_lof(row: dict) -> dict:
         'quote_at': row.get('行情时间'),
         'nav_date': row.get('净值日期'),
         'nav_source': str(row.get('净值来源', '')),
+        'premium_persistence': row.get('premium_persistence'),
         'valid_quote': bool(row.get('报价有效')),
         'subscription_open': bool(row.get('可申购')),
         'subscription_limit': row.get('单账户限额'),
@@ -60,13 +61,7 @@ def normalize_lof(row: dict) -> dict:
         'five_day_avg_turnover': row.get('近5日平均成交额'),
         'verification_evidence': row.get('规则证据') or {},
         'manual_override_active': bool(row.get('人工覆盖有效')),
-        'premium_persistence': row.get('溢价持续性') or {
-            'consecutive_positive_sessions': None,
-            'status': 'unavailable',
-            'as_of': None,
-            'history_started_on': None,
-            'reason': '连续正溢价历史暂不可用',
-        },
+        'execution': row.get('场内规则') or {},
     }
 
 

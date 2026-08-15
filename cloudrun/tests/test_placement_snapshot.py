@@ -2,7 +2,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import sys
 import unittest
-from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -11,6 +10,30 @@ from services import placement_snapshot
 
 
 class PlacementSnapshotPolicyTest(unittest.TestCase):
+    def test_abandoned_refresh_job_can_be_taken_over_after_timeout(self):
+        job = type('Job', (), {
+            'status': 'running',
+            'started_at': datetime(2026, 7, 22, 9, 54),
+            'requested_at': datetime(2026, 7, 22, 9, 53),
+        })()
+        self.assertTrue(
+            placement_snapshot._is_abandoned_refresh_job(
+                job, datetime(2026, 7, 22, 10, 0)
+            )
+        )
+
+    def test_recent_refresh_job_stays_deduplicated(self):
+        job = type('Job', (), {
+            'status': 'running',
+            'started_at': datetime(2026, 7, 22, 9, 58),
+            'requested_at': datetime(2026, 7, 22, 9, 57),
+        })()
+        self.assertFalse(
+            placement_snapshot._is_abandoned_refresh_job(
+                job, datetime(2026, 7, 22, 10, 0)
+            )
+        )
+
     def test_imminent_candidate_refreshes_every_five_minutes(self):
         now = datetime(2026, 7, 22, 10, 0)
         rows = [{'registration_date': '2026-07-23'}]
@@ -66,35 +89,60 @@ class PlacementSnapshotPolicyTest(unittest.TestCase):
         self.assertEqual(priority, placement_snapshot.SOURCE_PRIORITY['cninfo'])
         self.assertEqual(merged['registration_date'], '2026-07-24')
 
-    def test_public_row_hides_internal_state_and_marks_legacy_expiry(self):
-        row = placement_snapshot._public_row(
-            {
-                'stock_code': '001202',
-                'registration_date': '2026-07-23',
-                '_placement_issuer_terms_priority': 400,
-            },
-            datetime(2026, 7, 24, 9, 0),
+    def test_equal_priority_official_observation_fills_missing_term(self):
+        current = {
+            'shareholder_ratio': None,
+            '_placement_issuer_terms_priority': placement_snapshot.SOURCE_PRIORITY['cninfo'],
+        }
+        merged, result, _ = placement_snapshot._reconcile_row(
+            current, {'shareholder_ratio': 71.13}, 'cninfo'
         )
+        self.assertEqual(result, 'accepted')
+        self.assertEqual(merged['shareholder_ratio'], 71.13)
+
+    def test_unavailable_official_observation_clears_legacy_ratio(self):
+        current = {
+            'shareholder_ratio': 100.0,
+            '_placement_issuer_terms_priority': placement_snapshot.SOURCE_PRIORITY['cninfo'],
+        }
+        merged, result, _ = placement_snapshot._reconcile_row(
+            current,
+            {
+                'shareholder_ratio': None,
+                'placement_data_status': 'unavailable',
+            },
+            'cninfo',
+        )
+        self.assertEqual(result, 'accepted')
+        self.assertIsNone(merged['shareholder_ratio'])
+
+    def test_public_row_hides_internal_reconciliation_state(self):
+        row = placement_snapshot._public_row({'stock_code': '001202', '_placement_issuer_terms_priority': 400})
         self.assertEqual(
             row,
             {
                 'stock_code': '001202',
-                'registration_date': '2026-07-23',
-                'placement_observation_state': 'expired',
+                'shareholder_amount': None,
+                'shareholder_ratio': None,
+                'tradable_amount': None,
+                'placement_data_status': 'unavailable',
+                'placement_data_reason': '等待巨潮官方配售结果公告',
             },
         )
 
-    def test_legacy_early_stage_snapshot_is_excluded_from_observation(self):
-        self.assertFalse(
-            placement_snapshot._is_late_stage_observation_row(
-                {'status': '交易所受理', 'progress_full': '2026-06-01 交易所受理'}
-            )
+    def test_public_row_removes_legacy_estimated_placement_metrics(self):
+        row = placement_snapshot._public_row(
+            {
+                'stock_code': '688480',
+                'issue_size': 5.519,
+                'shareholder_ratio': 0,
+                'tradable_amount': 5.519,
+            }
         )
-        self.assertTrue(
-            placement_snapshot._is_late_stage_observation_row(
-                {'status': '同意注册', 'progress_full': '2026-06-17 同意注册'}
-            )
-        )
+        self.assertIsNone(row['shareholder_amount'])
+        self.assertIsNone(row['shareholder_ratio'])
+        self.assertIsNone(row['tradable_amount'])
+        self.assertEqual(row['placement_data_status'], 'unavailable')
 
     def test_direct_pending_collector_is_recorded_as_eastmoney(self):
         self.assertEqual(placement_snapshot._source_kind({}, 'direct'), 'eastmoney')
@@ -111,19 +159,3 @@ class PlacementSnapshotPolicyTest(unittest.TestCase):
             placement_snapshot.start_pending_snapshot_scheduler(lambda: [])
         schedule.assert_called_once()
         self.assertEqual(schedule_next.call_args.args[1], 300)
-
-    def test_old_running_job_is_orphaned_after_service_restart(self):
-        job = SimpleNamespace(
-            requested_at=datetime(2026, 8, 5, 9, 0),
-            started_at=datetime(2026, 8, 5, 9, 1),
-        )
-        self.assertTrue(
-            placement_snapshot._is_orphaned_active_job(
-                job, datetime(2026, 8, 5, 9, 32)
-            )
-        )
-        self.assertFalse(
-            placement_snapshot._is_orphaned_active_job(
-                job, datetime(2026, 8, 5, 9, 30)
-            )
-        )

@@ -8,12 +8,8 @@ import logging
 import os
 import time
 import traceback
-import json
 from functools import wraps
-from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor
 
-import click
 from flask import Flask, request
 from flask_cors import CORS
 from datetime import datetime, timezone, timedelta
@@ -30,7 +26,6 @@ from services.cache import (
 from services.lof_arbitrage import get_arbitrage_prediction as _get_lof_arbitrage_prediction
 from services.lof_detail import get_lof_detail
 from services.hk_ipo import refresh_hk_ipo_cache
-import models.lof_premium  # noqa: F401，确保 SQLite 开发数据库创建 LOF 表
 from utils.response import api_response, api_error, ErrorCode
 from utils.limiting import limit
 from utils.logging import setup_logging
@@ -67,61 +62,6 @@ factory = create_default_factory()
 
 # 缓存管理器
 cache = get_cache_manager()
-
-_WARMING_FALLBACKS = {
-    'convertible_list': lambda kwargs: {
-        'total': 0, 'page': kwargs.get('page', 1),
-        'page_size': kwargs.get('page_size', 100), 'items': [],
-    },
-    'lof_list': lambda kwargs: [],
-    'lof_opportunities': lambda kwargs: {'premium': [], 'discount': []},
-    'lof_summary': lambda kwargs: {},
-    'hk_ipo_list': lambda kwargs: [],
-    'hk_ipo_upcoming': lambda kwargs: [],
-    'hk_ipo_summary': lambda kwargs: {},
-    'closed_end_list': lambda kwargs: [],
-    'closed_end_summary': lambda kwargs: {},
-}
-
-
-@app.cli.command('lof-trading-calendar-import')
-@click.option('--file', 'calendar_file', type=click.Path(exists=True, path_type=Path), required=True)
-@click.option('--source', required=True, help='交易所官方日历来源名称')
-@click.option('--version', default=None, help='官方公告或文件版本')
-def lof_trading_calendar_import(calendar_file, source, version):
-    """导入官方确认的沪深共同交易日 JSON 文件。"""
-    from datetime import datetime
-    from services.lof_premium_persistence import import_trading_calendar
-
-    payload = json.loads(calendar_file.read_text(encoding='utf-8'))
-    raw_days = payload.get('trading_days', payload) if isinstance(payload, dict) else payload
-    days = [datetime.strptime(str(value), '%Y-%m-%d').date() for value in raw_days]
-    click.echo(json.dumps({'imported': import_trading_calendar(days, source=source, source_version=version)}, ensure_ascii=False))
-
-
-def _current_lof_codes():
-    from services.lof_fund import _fetch_em_lof_rows
-
-    return [str(row.get('f12')) for row in _fetch_em_lof_rows() if row.get('f12')]
-
-
-@app.cli.command('lof-premium-backfill')
-@click.option('--year', type=int, required=True)
-def lof_premium_backfill(year):
-    """回补当前有效 LOF 的指定自然年同日可比观测。"""
-    from services.lof_premium_persistence import backfill_year
-
-    if year != datetime.now(CST).year:
-        raise click.BadParameter('首次回补只允许当前自然年', param_hint='--year')
-    click.echo(json.dumps(backfill_year(_current_lof_codes(), year), ensure_ascii=False))
-
-
-@app.cli.command('lof-premium-capture')
-def lof_premium_capture():
-    """采集当日有效 LOF 的收盘后观测，由外部调度器调用。"""
-    from services.lof_premium_persistence import capture_day
-
-    click.echo(json.dumps(capture_day(_current_lof_codes()), ensure_ascii=False))
 
 logger.info(f'后端启动完成，主数据源: {factory._primary_name}，缓存后端: {cache.backend_type}')
 
@@ -177,7 +117,31 @@ def log_request_end(response):
 
 # ==================== 通用数据获取 ====================
 
-def fetch_with_cache(data_type: str, method_name: str, force_refresh=False, use_swr=True, **kwargs):
+_NO_COLD_VALUE = object()
+
+
+def _schedule_cache_refresh(cache_key, fetch_func, ttl):
+    """稍后启动回源，避免 CPU 密集的解析抢占当前 HTTP 响应。"""
+    import threading
+    from services.cache import _maybe_trigger_background_refresh
+
+    timer = threading.Timer(
+        0.05,
+        _maybe_trigger_background_refresh,
+        args=(cache_key, fetch_func, ttl, 0.7),
+    )
+    timer.daemon = True
+    timer.start()
+
+
+def fetch_with_cache(
+    data_type: str,
+    method_name: str,
+    force_refresh=False,
+    use_swr=True,
+    cold_value=_NO_COLD_VALUE,
+    **kwargs,
+):
     """通用数据获取：缓存 → 数据源降级
 
     Args:
@@ -210,27 +174,24 @@ def fetch_with_cache(data_type: str, method_name: str, force_refresh=False, use_
         cached = cache.get(cache_key)
         if cached is not None:
             # 有缓存，后台异步刷新
-            from services.cache import _maybe_trigger_background_refresh
-            _maybe_trigger_background_refresh(cache_key, _fetch, ttl, 0.7)
+            _schedule_cache_refresh(cache_key, _fetch, ttl)
             return cached, 'cache', True
 
-        snapshot = cache.get_stale(cache_key)
+        # 进程重启后优先返回最近一次成功值，避免用户请求等待上游。
+        snapshot = cache.get_snapshot(cache_key)
         if snapshot is not None:
             cache.set(cache_key, snapshot, ttl)
-            from services.cache import _maybe_trigger_background_refresh
-            _maybe_trigger_background_refresh(cache_key, _fetch, ttl, 0.7)
-            return snapshot, 'local_snapshot', True
-
-        # 上游网络只由后台刷新承担，常规页面读取必须快速返回。
-        from services.cache import _maybe_trigger_background_refresh
-        _maybe_trigger_background_refresh(cache_key, _fetch, ttl, 0.7)
-        fallback = _WARMING_FALLBACKS.get(data_type)
-        return (fallback(kwargs) if fallback else {}, 'warming', False)
+            _schedule_cache_refresh(cache_key, _fetch, ttl)
+            return snapshot, 'snapshot', True
 
     # 普通模式：先查缓存，未命中则同步获取
     cached = cache.get(cache_key)
     if cached is not None:
         return cached, 'cache', True
+
+    if cold_value is not _NO_COLD_VALUE:
+        _schedule_cache_refresh(cache_key, _fetch, ttl)
+        return cold_value, 'warming', True
 
     data, source = factory.get_with_fallback(method_name, **kwargs)
     if data is not None:
@@ -247,21 +208,26 @@ def fetch_with_cache(data_type: str, method_name: str, force_refresh=False, use_
 def market_overview():
     """综合市场概览"""
     try:
-        requests = {
-            'convertible_bond': ('convertible_temperature', 'get_convertible_temperature'),
-            'lof_fund': ('lof_summary', 'get_lof_summary'),
-            'market_sentiment': ('market_sentiment', 'get_market_sentiment'),
-            'fund_flow': ('fund_flow', 'get_fund_flow'),
-        }
-        with ThreadPoolExecutor(max_workers=len(requests)) as executor:
-            futures = {
-                key: executor.submit(fetch_with_cache, data_type, method_name)
-                for key, (data_type, method_name) in requests.items()
-            }
-            responses = {key: future.result() for key, future in futures.items()}
-        result = {key: data or {} for key, (data, _, _) in responses.items()}
-        sources = {source for _, source, _ in responses.values()}
-        return api_response(result, source=','.join(sorted(sources)), cached=all(cached for _, _, cached in responses.values()))
+        result = {}
+
+        # 可转债温度
+        data, source, cached = fetch_with_cache(
+            'convertible_temperature', 'get_convertible_temperature', cold_value={})
+        result['convertible_bond'] = data or {}
+
+        # LOF 概览
+        data, _, _ = fetch_with_cache('lof_summary', 'get_lof_summary', cold_value={})
+        result['lof_fund'] = data or {}
+
+        # 市场情绪
+        data, _, _ = fetch_with_cache('market_sentiment', 'get_market_sentiment')
+        result['market_sentiment'] = data or {}
+
+        # 资金流向
+        data, _, _ = fetch_with_cache('fund_flow', 'get_fund_flow')
+        result['fund_flow'] = data or {}
+
+        return api_response(result, source=source, cached=cached)
     except Exception as e:
         logger.error(f'市场概览异常: {e}')
         return api_error(*ErrorCode.DATA_SOURCE_ERROR)
@@ -311,7 +277,16 @@ def convertible_list():
     kwargs = {k: v for k, v in kwargs.items() if v is not None}
 
     data, source, cached = fetch_with_cache(
-        'convertible_list', 'get_convertible_list', force_refresh=force, **kwargs)
+        'convertible_list',
+        'get_convertible_list',
+        force_refresh=force,
+        cold_value={
+            'total': 0,
+            'page': kwargs.get('page', 1),
+            'page_size': kwargs.get('page_size', 20),
+            'items': [],
+        },
+        **kwargs)
 
     if data is None:
         return api_error(*ErrorCode.DATA_SOURCE_ERROR)
@@ -324,7 +299,15 @@ def convertible_signals():
     """可转债信号"""
     force = request.args.get('refresh', '').lower() == 'true'
     data, source, cached = fetch_with_cache(
-        'convertible_signals', 'get_convertible_signals', force_refresh=force)
+        'convertible_signals',
+        'get_convertible_signals',
+        force_refresh=force,
+        cold_value={
+            'double_low': [],
+            'force_redeem': [],
+            'discount': [],
+            'down_revised': [],
+        })
     if data is None:
         return api_error(*ErrorCode.DATA_SOURCE_ERROR)
     return api_response(data, source=source, cached=cached)
@@ -336,7 +319,10 @@ def convertible_temperature():
     """可转债市场温度"""
     force = request.args.get('refresh', '').lower() == 'true'
     data, source, cached = fetch_with_cache(
-        'convertible_temperature', 'get_convertible_temperature', force_refresh=force)
+        'convertible_temperature',
+        'get_convertible_temperature',
+        force_refresh=force,
+        cold_value={})
     if data is None:
         return api_error(*ErrorCode.DATA_SOURCE_ERROR)
     return api_response(data, source=source, cached=cached)
@@ -370,13 +356,54 @@ def convertible_pending():
         def fetch_pending_rows():
             rows, source = factory.get_with_fallback('get_convertible_pending')
             if rows:
-                from services.convertible_bond import schedule_pending_enrichment
+                from services.convertible_bond import (
+                    enrich_pending_with_placement_announcements,
+                    schedule_pending_enrichment,
+                )
+                rows = enrich_pending_with_placement_announcements(rows)
                 schedule_pending_enrichment(rows)
             return rows, source
 
         schedule_pending_snapshot_refresh(fetch_pending_rows)
 
     return api_response(payload, source='placement_snapshot', cached=True)
+
+
+@app.route('/api/v1/convertible/new-listed')
+@limit(30)
+def convertible_new_listed():
+    """今年上市新债表现列表"""
+    force = request.args.get('refresh', '').lower() == 'true'
+    if not force:
+        cache_key = build_cache_key('convertible:new:listed', 'data')
+        cached = cache.get(cache_key)
+        from services.convertible_bond import _read_new_listed_snapshot
+
+        def fetch_new_listed():
+            data, source = factory.get_with_fallback('get_convertible_new_listed')
+            return data
+
+        if cached is not None:
+            return api_response(cached, source='cache', cached=True)
+
+        snapshot = _read_new_listed_snapshot()
+        if snapshot:
+            return api_response(snapshot, source='snapshot', cached=True)
+
+        # 首次启动没有快照时也不阻塞首屏；后台刷新完成后下一次请求即可拿到数据。
+        from services.cache import _maybe_trigger_background_refresh
+
+        ttl = get_cache_ttl('convertible_new_listed')
+        _maybe_trigger_background_refresh(
+            cache_key, fetch_new_listed, ttl, 0.7
+        )
+        return api_response([], source='warming', cached=True)
+
+    data, source, cached = fetch_with_cache(
+        'convertible_new_listed', 'get_convertible_new_listed', force_refresh=force)
+    if data is None:
+        return api_response([], source='none', cached=False)
+    return api_response(data, source=source, cached=cached)
 
 
 # ==================== 配售公告 API ====================
@@ -410,7 +437,7 @@ def lof_list():
     """LOF 基金列表"""
     force = request.args.get('refresh', '').lower() == 'true'
     data, source, cached = fetch_with_cache(
-        'lof_list', 'get_lof_list', force_refresh=force)
+        'lof_list', 'get_lof_list', force_refresh=force, cold_value=[])
     if data is None:
         return api_error(*ErrorCode.DATA_SOURCE_ERROR)
     return api_response(data, source=source, cached=cached)
@@ -434,7 +461,7 @@ def lof_summary():
     """LOF 市场概览"""
     force = request.args.get('refresh', '').lower() == 'true'
     data, source, cached = fetch_with_cache(
-        'lof_summary', 'get_lof_summary', force_refresh=force)
+        'lof_summary', 'get_lof_summary', force_refresh=force, cold_value={})
     if data is None:
         return api_error(*ErrorCode.DATA_SOURCE_ERROR)
     return api_response(data, source=source, cached=cached)
@@ -781,7 +808,11 @@ from services.placement_snapshot import start_pending_snapshot_scheduler
 def _startup_pending_snapshot_fetch():
     rows, source = factory.get_with_fallback('get_convertible_pending')
     if rows:
-        from services.convertible_bond import schedule_pending_enrichment
+        from services.convertible_bond import (
+            enrich_pending_with_placement_announcements,
+            schedule_pending_enrichment,
+        )
+        rows = enrich_pending_with_placement_announcements(rows)
         schedule_pending_enrichment(rows)
     return rows, source
 
@@ -1029,7 +1060,8 @@ def start_cache_warmup():
                 ('fund_flow', lambda: factory.get_with_fallback('get_fund_flow')[0]),
                 ('lof_list', lambda: factory.get_with_fallback('get_lof_list')[0]),
                 ('lof_summary', lambda: factory.get_with_fallback('get_lof_summary')[0]),
-                ('convertible_list', lambda: factory.get_with_fallback('get_convertible_list', page=1, page_size=50)[0]),
+                ('convertible_list', lambda: factory.get_with_fallback('get_convertible_list', page=1, page_size=500)[0]),
+                ('convertible_new_listed', lambda: factory.get_with_fallback('get_convertible_new_listed')[0]),
             ]
             warmup_cache(warmup_items)
         except Exception as e:
@@ -1040,13 +1072,13 @@ def start_cache_warmup():
     logger.info('缓存预热已启动（后台执行）')
 
 
-def serve():
-    """生产和本地统一入口：先后台预热，再接受 HTTP 请求。"""
-    start_cache_warmup()
-    app.run(host='0.0.0.0', port=8080, debug=False, use_reloader=False)
-
-
 # ==================== 启动 ====================
 
+def serve(debug=False):
+    """WSL/systemd 本地部署入口。"""
+    start_cache_warmup()
+    app.run(host='0.0.0.0', port=8080, debug=debug, use_reloader=False)
+
+
 if __name__ == '__main__':
-    serve()
+    serve(debug=True)

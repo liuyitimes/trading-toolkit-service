@@ -5,7 +5,7 @@ WORKDIR /app
 # 安装依赖并利用 Docker 层缓存
 COPY cloudrun/requirements.txt .
 COPY alembic.ini .
-RUN pip install --no-cache-dir -r requirements.txt \
+  RUN pip install --no-cache-dir -r requirements.txt \
     && rm -rf /root/.cache/pip
 
 # 创建非 root 用户

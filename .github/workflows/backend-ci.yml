@@ -21,7 +21,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install -r cloudrun/requirements-dev.txt
+            pip install -r cloudrun/requirements-dev.txt
 
       - name: Run API log self-check
         env:

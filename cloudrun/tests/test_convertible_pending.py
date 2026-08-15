@@ -4,20 +4,75 @@ import sys
 import unittest
 from unittest.mock import patch
 
+import pandas as pd
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from services.convertible_bond import (
     _build_progress_full,
     _calc_cash_ratio,
+    _fetch_em_bond_turnover_map,
+    _fetch_kline_series,
+    _fetch_em_pending_bonds,
+    _enrich_with_local_placement,
     _get_placement_observation_state,
     _is_late_stage_observation,
     _is_pending_placement_visible,
     _load_cached_ma20,
     _timeline_needs_refresh,
+    get_convertible_new_listed,
 )
 
 
 class PendingPlacementVisibilityTest(unittest.TestCase):
+    def test_announcement_amount_drives_tradable_amount(self):
+        rows = [{'stock_code': '300001', 'issue_size': 10.0}]
+        with patch(
+            'services.announcement_parser.get_placement_by_stock',
+            return_value={
+                'shareholder_amount': 6.25,
+                'shareholder_ratio': 62.5,
+                'announce_date': '2026-08-08',
+                'announcement_id': '202608080001',
+                'source_url': 'https://static.cninfo.com.cn/a.pdf',
+            },
+        ):
+            result = _enrich_with_local_placement(rows)
+
+        self.assertEqual(result[0]['shareholder_amount'], 6.25)
+        self.assertEqual(result[0]['shareholder_ratio'], 62.5)
+        self.assertEqual(result[0]['tradable_amount'], 3.75)
+        self.assertEqual(result[0]['placement_data_status'], 'verified')
+
+    def test_missing_announcement_does_not_fallback_to_issue_size(self):
+        rows = [{'stock_code': '300002', 'issue_size': 10.0}]
+        with patch(
+            'services.announcement_parser.get_placement_by_stock',
+            return_value=None,
+        ):
+            result = _enrich_with_local_placement(rows)
+
+        self.assertIsNone(result[0]['shareholder_amount'])
+        self.assertIsNone(result[0]['shareholder_ratio'])
+        self.assertIsNone(result[0]['tradable_amount'])
+        self.assertEqual(result[0]['placement_data_status'], 'unavailable')
+
+    def test_ratio_without_shareholder_amount_remains_unavailable(self):
+        rows = [{'stock_code': '300003', 'issue_size': 10.0}]
+        with patch(
+            'services.announcement_parser.get_placement_by_stock',
+            return_value={
+                'shareholder_amount': None,
+                'shareholder_ratio': 100.0,
+                'announce_date': '2026-08-08',
+            },
+        ):
+            result = _enrich_with_local_placement(rows)
+
+        self.assertIsNone(result[0]['shareholder_amount'])
+        self.assertIsNone(result[0]['shareholder_ratio'])
+        self.assertIsNone(result[0]['tradable_amount'])
+        self.assertEqual(result[0]['placement_data_status'], 'unavailable')
     def test_registration_date_state_keeps_expired_items_visible(self):
         now = datetime(2026, 7, 14, 9, 0)
         self.assertEqual(_get_placement_observation_state('2026-07-13', now), 'expired')
@@ -83,3 +138,205 @@ class PendingPlacementVisibilityTest(unittest.TestCase):
 
         with patch('services.cache.get_cache_manager', return_value=Cache()):
             self.assertEqual(_load_cached_ma20(['600389', '000001']), {'600389': 18.76})
+
+    def test_kline_uses_tencent_before_eastmoney_fallback(self):
+        with (
+            patch(
+                'services.convertible_bond._fetch_tencent_kline_series',
+                return_value=[{'date': '2026-08-05', 'close': 157.3}],
+            ) as tencent_fetch,
+            patch('services.convertible_bond._fetch_em_kline_series') as em_fetch,
+        ):
+            self.assertEqual(
+                _fetch_kline_series('110102'),
+                [{'date': '2026-08-05', 'close': 157.3}],
+            )
+            tencent_fetch.assert_called_once_with('110102', limit=500)
+            em_fetch.assert_not_called()
+
+    def test_pending_fields_use_registration_day_historical_closes(self):
+        class Response:
+            status_code = 200
+
+            def json(self):
+                return {
+                    'result': {
+                        'data': [
+                            {
+                                'SECURITY_CODE': '123456',
+                                'CORRECODE_NAME_ABBR': '测试转债',
+                                'CONVERT_STOCK_CODE': '300001',
+                                'SECURITY_SHORT_NAME': '测试股份',
+                                'LISTING_DATE': '',
+                                'SECURITY_START_DATE': '2026-07-13',
+                                'PUBLIC_START_DATE': '2026-07-14',
+                                'ACTUAL_ISSUE_SCALE': 5,
+                                'INITIAL_TRANSFER_PRICE': 10,
+                                'FIRST_PER_PREPLACING': 0.5,
+                                'RATING': 'AA',
+                                'CORRECODE': '370001',
+                                'ONLINE_GENERAL_LWR': 0.001,
+                            }
+                        ]
+                    }
+                }
+
+        with (
+            patch('services.convertible_bond.em_get', return_value=Response()),
+            patch(
+                'services.convertible_bond._load_timeline_cache',
+                return_value={'300001': {'stage_dates': {'同意注册': '2026-06-01'}}},
+            ),
+            patch(
+                'services.convertible_bond._fetch_sina_stock_quotes',
+                return_value={'300001': {'price': 10.5, 'change_pct': 1.2}},
+            ),
+            patch(
+                'services.convertible_bond._fetch_stock_fundamentals',
+                return_value={'300001': {'pb': 1.8, 'total_shares': 100000000}},
+            ),
+            patch('services.convertible_bond._load_cached_ma20', return_value={'300001': 10}),
+            patch(
+                'services.convertible_bond._read_cached_kline_series',
+                return_value=[
+                    {'date': '2026-07-10', 'close': 9.8},
+                    {'date': '2026-07-13', 'close': 10.0},
+                    {'date': '2026-07-14', 'close': 9.7},
+                ],
+            ),
+            patch('services.convertible_bond._schedule_kline_refresh_many'),
+        ):
+            rows = _fetch_em_pending_bonds()
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['registration_close_price'], 10.0)
+        self.assertEqual(rows[0]['post_registration_close_price'], 9.7)
+        self.assertEqual(rows[0]['record_price'], 10.0)
+        self.assertEqual(rows[0]['expected_profit'], None)
+        self.assertEqual(rows[0]['safety_pad'], None)
+
+    def test_new_listed_returns_issue_gain_issue_size_and_turnover(self):
+        class FixedDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return cls(2026, 8, 6, 10, 0, tzinfo=tz)
+
+        bonds = pd.DataFrame(
+            [
+                {
+                    'bond_code': '123456',
+                    'bond_name': '测试转债',
+                    'stock_code': '300001',
+                    'stock_name': '测试股份',
+                    'exchange': '深',
+                    'list_date': '2026-08-03',
+                    'price': 128,
+                    'change_pct': 1.1,
+                    'premium_rate': 20,
+                    'issue_size': 5.0,
+                },
+                {
+                    'bond_code': '113999',
+                    'bond_name': '去年转债',
+                    'stock_code': '600001',
+                    'stock_name': '去年股份',
+                    'exchange': '沪',
+                    'list_date': '2025-12-30',
+                    'price': 118,
+                },
+            ]
+        )
+
+        def fake_kline(code, limit=500):
+            if code == '123456':
+                return [
+                    {'date': '2026-08-03', 'close': 121},
+                    {'date': '2026-08-04', 'close': 125},
+                ]
+            return [{'date': '2025-12-30', 'close': 118}]
+
+        with (
+            patch('services.convertible_bond.datetime', FixedDatetime),
+            patch('services.convertible_bond._merge_bond_data', return_value=bonds),
+            patch('services.convertible_bond._read_cached_kline_series', side_effect=fake_kline),
+            patch(
+                'services.convertible_bond._fetch_em_bond_turnover_map',
+                return_value={'123456': 12.34},
+            ),
+            patch('services.convertible_bond._schedule_kline_refresh_many'),
+            patch('services.convertible_bond._write_new_listed_snapshot'),
+        ):
+            rows = get_convertible_new_listed()
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['bond_code'], '123456')
+        self.assertEqual(rows[0]['latest_close'], 125)
+        self.assertEqual(rows[0]['gain_since_listing'], 28.0)
+        self.assertNotIn('listing_close', rows[0])
+        self.assertNotIn('month_base_close', rows[0])
+        self.assertNotIn('month_gain', rows[0])
+        self.assertEqual(rows[0]['three_day_stage'], 2)
+        self.assertEqual(rows[0]['three_day_price'], 125)
+        self.assertEqual(rows[0]['three_day_gain'], 25.0)
+        self.assertEqual(rows[0]['issue_size'], 5.0)
+        self.assertEqual(rows[0]['turnover_rate'], 12.34)
+
+    def test_new_listed_snapshot_quality_ignores_removed_month_gain(self):
+        from services.convertible_bond import _new_listed_snapshot_quality
+
+        with_legacy_month_gain = [
+            {'bond_code': '113708', 'month_gain': 1.2, 'three_day_gain': 57.68},
+            {'bond_code': '110102', 'month_gain': 5.6, 'three_day_gain': 66.11},
+        ]
+        without_legacy_month_gain = [
+            {'bond_code': '113708', 'three_day_gain': 57.68},
+            {'bond_code': '110102', 'three_day_gain': 66.11},
+        ]
+
+        self.assertEqual(
+            _new_listed_snapshot_quality(with_legacy_month_gain),
+            _new_listed_snapshot_quality(without_legacy_month_gain),
+        )
+
+    def test_new_listed_snapshot_migrates_legacy_listing_and_month_fields(self):
+        from services.convertible_bond import _normalize_new_listed_snapshot_rows
+
+        rows = _normalize_new_listed_snapshot_rows([
+            {
+                'bond_code': '113708',
+                'price': 157.45,
+                'latest_close': 157.678,
+                'listing_close': 146.723,
+                'gain_since_listing': 7.47,
+                'month_base_close': 146.723,
+                'month_gain': 7.47,
+            }
+        ])
+
+        self.assertEqual(rows[0]['gain_since_listing'], 57.45)
+        self.assertNotIn('listing_close', rows[0])
+        self.assertNotIn('month_base_close', rows[0])
+        self.assertNotIn('month_gain', rows[0])
+
+    def test_turnover_map_paginates_beyond_first_page_cap(self):
+        class Response:
+            def __init__(self, page):
+                self.status_code = 200
+                self._page = page
+
+            def json(self):
+                if self._page == 1:
+                    diff = [{'f12': f'11{i:04d}', 'f8': i} for i in range(100)]
+                else:
+                    diff = [{'f12': f'12{i:04d}', 'f8': i} for i in range(50)]
+                return {'data': {'total': 150, 'diff': diff}}
+
+        with patch(
+            'services.convertible_bond.em_get',
+            side_effect=[Response(1), Response(2)],
+        ):
+            result = _fetch_em_bond_turnover_map()
+
+        self.assertEqual(len(result), 150)
+        self.assertEqual(result['110000'], 0.0)
+        self.assertEqual(result['120049'], 49.0)

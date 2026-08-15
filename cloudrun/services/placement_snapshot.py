@@ -21,7 +21,7 @@ _refresh_running = False
 _scheduler_lock = threading.Lock()
 _scheduler_running = False
 _last_cleanup_date = None
-_ACTIVE_JOB_TIMEOUT = timedelta(minutes=30)
+_ACTIVE_REFRESH_JOB_TIMEOUT = timedelta(minutes=5)
 
 ISSUER_TERM_FIELDS = {
     'registration_date', 'apply_date', 'per_share_allocation', 'issue_size',
@@ -85,11 +85,26 @@ def _reconcile_row(current, incoming, source_kind):
         if field not in ISSUER_TERM_FIELDS and field not in MARKET_FIELDS and not field.startswith('_'):
             current[field] = value
 
+    # 新规则判定公告金额不可用时，清除旧版本由孤立比例留下的伪造配售率。
+    # 手工修正具有更高优先级，不受该清理影响。
+    if (
+        incoming.get('placement_data_status') == 'unavailable'
+        and incoming_priority >= current_priority
+        and 'shareholder_ratio' in incoming
+    ):
+        current['shareholder_ratio'] = incoming.get('shareholder_ratio')
+
     if not current_priority or incoming_priority > current_priority:
         for field in ISSUER_TERM_FIELDS:
             if field in incoming:
                 current[field] = incoming[field]
         current['_placement_issuer_terms_priority'] = incoming_priority
+    elif incoming_priority == current_priority and not conflict:
+        # 同一官方来源的后续公告可以补齐之前缺失的字段，
+        # 但不得覆盖已有的同优先级事实。
+        for field in ISSUER_TERM_FIELDS:
+            if field in incoming and current.get(field) in (None, ''):
+                current[field] = incoming[field]
     elif conflict and incoming_priority == current_priority:
         result = 'conflict'
     elif conflict:
@@ -102,31 +117,18 @@ def _reconcile_row(current, incoming, source_kind):
     return current, result, incoming_priority
 
 
-def _placement_observation_state(registration_date, now):
-    value = str(registration_date or '')[:10]
-    try:
-        record_date = datetime.strptime(value, '%Y-%m-%d').date()
-    except ValueError:
-        return 'registration_unknown'
-    return 'expired' if record_date < now.date() else 'eligible'
-
-
-def _is_late_stage_observation_row(row):
-    if row.get('registration_date') or row.get('apply_date'):
-        return True
-    status = str(row.get('status') or row.get('progress') or '')
-    if status in ('上市委通过', '同意注册', '申购中', '待上市'):
-        return True
-    progress_full = str(row.get('progress_full') or '')
-    return '上市委通过' in progress_full or '同意注册' in progress_full
-
-
-def _public_row(row, now=None):
+def _public_row(row):
     public = {key: value for key, value in row.items() if not key.startswith('_placement_')}
-    if 'placement_observation_state' not in public:
-        public['placement_observation_state'] = _placement_observation_state(
-            public.get('registration_date'), now or _now()
-        )
+    # 兼容规则生效前持久化的快照：这些记录可能把东方财富的 0 配售率
+    # 或发行规模当成首日可交易量。除非已有公告金额核验，统一按未知输出。
+    if public.get('placement_data_status') != 'verified':
+        public['shareholder_amount'] = None
+        public['shareholder_ratio'] = None
+        public['tradable_amount'] = None
+        public['placement_data_status'] = 'unavailable'
+        public.setdefault('placement_data_reason', '等待巨潮官方配售结果公告')
+    if not public.get('stock_code') and not public.get('bond_code'):
+        return {}
     return public
 
 
@@ -156,7 +158,7 @@ def _serialize_snapshot(snapshot, now):
     interval = _refresh_interval([row], now)
     data_as_of = snapshot.data_as_of or snapshot.updated_at or now
     stale = snapshot.freshness_state == 'stale' or now - data_as_of > interval
-    return _public_row(row, now), stale, data_as_of
+    return _public_row(row), stale, data_as_of
 
 
 def get_pending_snapshot_payload():
@@ -177,7 +179,7 @@ def get_pending_snapshot_payload():
         review_required = False
         for snapshot in snapshots:
             row, row_stale, data_as_of = _serialize_snapshot(snapshot, now)
-            if not row or not _is_late_stage_observation_row(row):
+            if not row:
                 continue
             rows.append(row)
             stale = stale or row_stale
@@ -381,10 +383,14 @@ def _record_job(status, job_id, error=None):
     return None
 
 
-def _is_orphaned_active_job(job, now):
-    """服务重启后没有工作线程的旧运行任务不得永久阻塞刷新。"""
-    started_at = job.started_at or job.requested_at
-    return not started_at or now - started_at > _ACTIVE_JOB_TIMEOUT
+def _is_abandoned_refresh_job(job, now=None):
+    """判断是否为进程退出后遗留的活动刷新任务。"""
+    if not job or job.status not in ('queued', 'running', 'retrying'):
+        return False
+    reference_time = job.started_at or job.requested_at
+    if not reference_time:
+        return False
+    return (now or _now()) - reference_time > _ACTIVE_REFRESH_JOB_TIMEOUT
 
 
 def _refresh(fetcher, job_id):
@@ -421,15 +427,14 @@ def schedule_pending_snapshot_refresh(fetcher):
             active = (
                 db.query(PlacementRefreshJob)
                 .filter(PlacementRefreshJob.scope == 'pending', PlacementRefreshJob.status.in_(['queued', 'running', 'retrying']))
-                .order_by(PlacementRefreshJob.requested_at.desc())
                 .first()
             )
             if active:
-                if not _is_orphaned_active_job(active, _now()):
+                if not _is_abandoned_refresh_job(active):
                     return active.id
                 active.status = 'failed'
                 active.completed_at = _now()
-                active.last_error = '刷新任务超时，已在服务启动后重新排队。'
+                active.last_error = '刷新进程已退出，任务超时后由新进程接管'
             job = PlacementRefreshJob(scope='pending', status='queued')
             db.add(job)
             db.flush()

@@ -216,6 +216,8 @@ def build_lof_detail(current, history, holdings):
             'expected_sell_date': current.get('expected_sell_date'),
             'trade_path_verified': verified_path,
             'evidence': current.get('verification_evidence') or {},
+            'settlement_timing': (current.get('execution') or {}).get('settlement_timing'),
+            'minimum_order': (current.get('execution') or {}).get('minimum_order'),
         },
         'premium': {
             'gross_pct': current['premium'],

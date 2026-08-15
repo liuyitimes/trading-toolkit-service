@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """分级缓存系统 — 根据数据类型和交易时段动态调整 TTL"""
 
-import hashlib
 import json
 import logging
 import os
@@ -9,8 +8,6 @@ import threading
 import time
 from datetime import datetime, time as dt_time
 from pathlib import Path
-
-from services.market_data_validation import is_complete_convertible_list_payload
 
 logger = logging.getLogger('trading_toolkit')
 
@@ -24,6 +21,7 @@ CACHE_TTL_CONFIG = {
     'convertible_list': 900,
     'convertible_signals': 900,
     'convertible_temperature': 900,
+    'convertible_new_listed': 1800,
     'lof_list': 900,
     'lof_opportunities': 900,
     'lof_summary': 900,
@@ -56,6 +54,7 @@ def get_cache_ttl(data_type: str) -> int:
             'convertible_signals', 'lof_opportunities', 'market_sentiment',
             'fund_flow', 'hot_sectors', 'convertible_signals', 'lof_summary',
             'hk_ipo_list', 'hk_ipo_upcoming', 'hk_ipo_summary',
+            'convertible_new_listed',
         ]
         if data_type in non_trading_types:
             return min(base_ttl * 4, 14400)
@@ -128,58 +127,51 @@ class CacheManager:
     def __init__(self):
         self._backend = None
         self._backend_type = 'memory'
-        self._snapshot_dir = Path(os.environ.get(
-            'CACHE_SNAPSHOT_DIR',
-            Path(__file__).resolve().parents[1] / 'runtime_cache',
-        ))
+        self._snapshot_path = Path(
+            os.environ.get(
+                'CACHE_SNAPSHOT_PATH',
+                Path(__file__).resolve().parents[1] / '.runtime' / 'api-cache.json',
+            )
+        )
+        self._snapshot_lock = threading.RLock()
+        self._snapshots = self._load_snapshots()
         self._init_backend()
 
-    def _snapshot_path(self, key: str) -> Path:
-        digest = hashlib.sha256(key.encode('utf-8')).hexdigest()
-        return self._snapshot_dir / f'{digest}.json'
-
-    @staticmethod
-    def _is_acceptable_value(key: str, value) -> bool:
-        return not key.startswith('convertible:list:data') or is_complete_convertible_list_payload(value)
-
-    def get_stale(self, key: str):
-        """读取不受 TTL 影响的上次成功快照，供请求路径快速降级。"""
+    def _load_snapshots(self):
         try:
-            payload = json.loads(self._snapshot_path(key).read_text(encoding='utf-8'))
-            value = payload.get('data') if isinstance(payload, dict) else None
-            if not self._is_acceptable_value(key, value):
-                logger.warning('[Cache] 忽略不完整的可转债列表快照: %s', key)
+            payload = json.loads(self._snapshot_path.read_text(encoding='utf-8'))
+            return payload if isinstance(payload, dict) else {}
+        except (FileNotFoundError, OSError, json.JSONDecodeError, TypeError):
+            return {}
+
+    def get_snapshot(self, key: str):
+        """读取跨进程保留的最近成功值，不受内存 TTL 影响。"""
+        with self._snapshot_lock:
+            entry = self._snapshots.get(key)
+            if not isinstance(entry, dict) or 'value' not in entry:
                 return None
-            return value
-        except (OSError, TypeError, json.JSONDecodeError):
-            return None
+            return entry['value']
 
-    def _write_snapshot(self, key: str, value) -> None:
-        if key.endswith(':_next_refresh'):
-            return
+    def _write_snapshots(self):
         try:
-            self._snapshot_dir.mkdir(parents=True, exist_ok=True)
-            target = self._snapshot_path(key)
-            temporary = target.with_suffix('.tmp')
+            self._snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self._snapshot_path.with_suffix('.tmp')
             temporary.write_text(
-                json.dumps({'saved_at': time.time(), 'data': value}, ensure_ascii=False, default=str),
+                json.dumps(self._snapshots, ensure_ascii=False, default=str),
                 encoding='utf-8',
             )
-            temporary.replace(target)
-        except (OSError, TypeError, ValueError):
-            logger.warning('[Cache] 无法写入本地快照: %s', key)
+            os.replace(temporary, self._snapshot_path)
+        except (OSError, TypeError, ValueError) as exc:
+            logger.warning('[CacheSnapshot] 写入本地快照失败: %s', exc)
 
     def _init_backend(self):
         redis_url = os.environ.get('REDIS_URL', '').strip()
         if not redis_url:
-            # 无 REDIS_URL，尝试 fakeredis（开发环境）
-            try:
-                import fakeredis
-                self._backend = fakeredis.FakeRedis(decode_responses=True)
-                self._backend_type = 'fakeredis'
-                return
-            except ImportError:
-                pass
+            # 本地服务依赖进程内缓存和持久快照；不让模拟 Redis 的空键读取
+            # 影响首个用户请求的延迟。
+            self._backend = _MemoryCache()
+            self._backend_type = 'memory'
+            return
         else:
             # 有 REDIS_URL，尝试连接真实 redis
             try:
@@ -208,27 +200,26 @@ class CacheManager:
             # redis 返回的可能是 bytes 或 str
             if isinstance(raw, bytes):
                 raw = raw.decode('utf-8')
-            value = json.loads(raw)
+            return json.loads(raw)
         except (json.JSONDecodeError, TypeError):
-            value = raw
+            return raw
         except Exception:
             return None
-        if not self._is_acceptable_value(key, value):
-            logger.warning('[Cache] 忽略不完整的可转债列表缓存: %s', key)
-            return None
-        return value
 
     def set(self, key: str, value, ttl: int = 300):
-        if not self._is_acceptable_value(key, value):
-            logger.warning('[Cache] 拒绝不完整的可转债列表快照: %s', key)
-            return
         try:
             serialized = json.dumps(value, ensure_ascii=False, default=str)
             if self._backend_type == 'memory':
                 self._backend.set(key, value, ttl)
             else:
                 self._backend.set(key, serialized, ex=ttl)
-            self._write_snapshot(key, value)
+            if not key.endswith(':_next_refresh'):
+                with self._snapshot_lock:
+                    self._snapshots[key] = {
+                        'updated_at': time.time(),
+                        'value': value,
+                    }
+                    self._write_snapshots()
         except Exception:
             pass
 

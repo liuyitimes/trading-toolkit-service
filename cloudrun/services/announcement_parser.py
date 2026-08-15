@@ -56,7 +56,7 @@ _STOCK_KEYWORDS = [
 
 
 def search_announcements(keywords, category='category_kzzq_szsh',
-                         days_back=30, max_pages=3):
+                         days_back=30, max_pages=3, stock=''):
     """搜索巨潮资讯公告
 
     Args:
@@ -84,7 +84,7 @@ def search_announcements(keywords, category='category_kzzq_szsh',
                     'column': '',          # 沪深两市
                     'tabName': 'fulltext',
                     'plate': '',
-                    'stock': '',
+                    'stock': stock or '',
                     'searchkey': keyword,
                     'secid': '',
                     'category': category,
@@ -269,16 +269,27 @@ def _parse_single_table(table, result, title=''):
             continue
         row_label = row[0]
 
-        # 原股东行
-        if any(kw in row_label for kw in ['原股东', '优先配售', '控股股东']):
-            if '一致行动人' in row_label:
-                continue  # 跳过子行
+        # 仅采纳公告明确披露的“原股东优先配售”汇总行。
+        # 控股股东、实际控制人及一致行动人均可能只是原股东的子集，不能
+        # 用作首日可交易量的扣减金额。
+        normalized_label = re.sub(r'\s+', '', row_label)
+        is_shareholder_total = (
+            '原股东' in normalized_label
+            and ('优先配售' in normalized_label or '合计' in normalized_label)
+        )
+        if is_shareholder_total:
             if amount_col >= 0 and amount_col < len(row):
-                result['shareholder_amount'] = _parse_amount(row[amount_col])
+                amount = _parse_amount(row[amount_col])
+                if amount is not None:
+                    result['shareholder_amount'] = amount
             if quantity_col >= 0 and quantity_col < len(row):
-                result['shareholder_quantity'] = _parse_quantity(row[quantity_col])
+                quantity = _parse_quantity(row[quantity_col])
+                if quantity is not None:
+                    result['shareholder_quantity'] = quantity
             if ratio_col >= 0 and ratio_col < len(row):
-                result['shareholder_ratio'] = _parse_ratio(row[ratio_col])
+                ratio = _parse_ratio(row[ratio_col])
+                if ratio is not None:
+                    result['shareholder_ratio'] = ratio
 
         # 网上社会公众投资者行
         elif any(kw in row_label for kw in ['社会公众', '网上投资者', '网上公众', '社会公众投资者']):
@@ -426,9 +437,22 @@ def save_placement_result(data, announcement_id, source_url=''):
 def get_placement_by_stock(stock_code):
     """按股票代码查询配售结果"""
     with get_db_session() as db:
-        record = db.query(PlacementResult).filter_by(
-            stock_code=stock_code
-        ).order_by(PlacementResult.announce_date.desc()).first()
+        records = db.query(PlacementResult).filter_by(
+            stock_code=stock_code,
+            asset_type='bond',
+        ).all()
+        # 同一标的会先后发布优先配售结果、发行结果和中签结果公告。
+        # 后两类公告可能日期更新却不含原股东金额，不能覆盖可计算的优先配售公告。
+        record = max(
+            records,
+            key=lambda item: (
+                item.shareholder_amount is not None,
+                item.shareholder_ratio is not None,
+                item.issue_size is not None,
+                item.announce_date or '',
+            ),
+            default=None,
+        )
         if record:
             return {
                 'stock_code': record.stock_code,
@@ -443,6 +467,7 @@ def get_placement_by_stock(stock_code):
                 'online_ratio': record.online_ratio,
                 'underwriter_amount': record.underwriter_amount,
                 'announce_date': record.announce_date,
+                'announcement_id': record.announcement_id,
                 'source_url': record.source_url,
             }
     return None
@@ -478,7 +503,7 @@ def get_all_placements(asset_type=None):
 # ==================== 主流程：同步公告数据 ====================
 
 
-def sync_cb_placement_announcements(days_back=30):
+def sync_cb_placement_announcements(days_back=30, stock_codes=None):
     """同步可转债配售/发行结果公告
 
     完整流程：搜索 → 过滤已入库 → 下载PDF → 解析 → 存库
@@ -493,7 +518,26 @@ def sync_cb_placement_announcements(days_back=30):
 
     # 1. 搜索公告
     keywords = _CB_RESULT_KEYWORDS + _CB_ALLOCATION_KEYWORDS
-    announcements = search_announcements(keywords, days_back=days_back)
+    normalized_codes = [
+        str(code).strip() for code in (stock_codes or [])
+        if str(code).strip().isdigit()
+    ]
+    stock_filter = ','.join(dict.fromkeys(normalized_codes))
+    announcements = search_announcements(
+        keywords,
+        days_back=days_back,
+        stock=stock_filter,
+    )
+    # 某些巨潮环境不支持多股票筛选；定向查询无结果时回退到关键词搜索，
+    # 再由 sec_code 过滤，确保公告刚发布时不会被接口兼容性遗漏。
+    if not announcements and stock_filter:
+        announcements = search_announcements(keywords, days_back=days_back)
+    if stock_filter:
+        code_set = set(normalized_codes)
+        announcements = [
+            ann for ann in announcements
+            if str(ann.get('sec_code') or '').strip() in code_set
+        ]
     if not announcements:
         logger.info('未找到新的可转债发行结果公告')
         return stats

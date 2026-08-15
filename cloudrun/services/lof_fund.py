@@ -434,7 +434,7 @@ def _fetch_tencent_quotes(universe):
     return result
 
 
-def _parse_row(row, quote_values, rule, fetched_at):
+def _parse_row(row, quote_values, rule, fetched_at, nav_date=None):
     """Join LOF membership with Tencent's price and latest unit-NAV fields."""
     code = str(row.get('f12') or '')
     values = quote_values or []
@@ -463,8 +463,8 @@ def _parse_row(row, quote_values, rule, fetched_at):
         '估值': valuation,
         '溢价率': premium,
         '行情时间': quote_time,
-        # 腾讯行情没有可验证的单位净值发布日期，不能用行情时间伪造。
-        '净值日期': None,
+        # 净值日期必须是上游实际公布日；行情时间不代表净值公布日，缺失时明确为 None。
+        '净值日期': nav_date,
         '净值来源': '腾讯财经基金行情（最新单位净值）',
         '报价有效': valid_quote,
         '申购状态': rule['subscription_status'],
@@ -475,6 +475,10 @@ def _parse_row(row, quote_values, rule, fetched_at):
         '交易路径已验证': rule['trade_path_verified'],
         '规则证据': rule['evidence'],
         '人工覆盖有效': rule['manual_override_active'],
+        '场内规则': {
+            'settlement_timing': rule.get('settlement_timing'),
+            'minimum_order': rule.get('minimum_order'),
+        },
         '近5日平均成交额': None,
     }
 
@@ -519,22 +523,58 @@ def get_lof_list():
     rows = _fetch_em_lof_rows()
     quotes = _fetch_tencent_quotes(rows)
     rules = _load_execution_rules()
+    database_rules = {}
+    try:
+        from models.database import SessionLocal
+        from services.lof_execution_rules import resolve_execution_rules
+
+        with SessionLocal() as db:
+            database_rules = resolve_execution_rules(
+                db,
+                [str(row.get('f12') or '') for row in rows],
+                now=fetched_at,
+            )
+    except Exception as exc:
+        logger.warning('[LOF] 场内规则库读取失败，回退兼容规则：%s', exc)
     result = []
     for row in rows:
         code = str(row.get('f12') or '')
         quote_values = quotes.get(code)
         if not code or not quote_values:
             continue
+        rule = database_rules.get(code)
+        if not rule or not rule.get('has_record'):
+            rule = _resolve_execution_rule(code, fetched_at, rules)
         item = _parse_row(
             row,
             quote_values,
-            _resolve_execution_rule(code, fetched_at, rules),
+            rule,
             fetched_at,
         )
         # The market-board directory is only a universe. Tencent's explicit
         # security type is the final LOF-only guard against ETFs.
         if item['报价有效'] or str(quote_values[61]).strip() == 'LOF':
             result.append(item)
+
+    # 连续正溢价与净值日期来自持久化观测；查询失败时保持缺失，不伪造零值。
+    try:
+        from models.database import SessionLocal
+        from services.lof_premium_persistence import (
+            compute_premium_persistence_batch,
+            latest_nav_dates,
+        )
+
+        codes = [item['代码'] for item in result if item.get('代码')]
+        with SessionLocal() as db:
+            persistence_map = compute_premium_persistence_batch(db, codes)
+            nav_map = latest_nav_dates(db, codes)
+        for item in result:
+            code = item.get('代码')
+            item['premium_persistence'] = (persistence_map or {}).get(code)
+            nav_info = (nav_map or {}).get(code)
+            item['净值日期'] = (nav_info or {}).get('nav_date') or None
+    except Exception as exc:
+        logger.warning('[LOF] premium persistence 接入列表失败: %s', exc)
 
     # K-line calls are intentionally bounded; absent history keeps a fund in observation.
     candidates = sorted(
@@ -548,23 +588,14 @@ def get_lof_list():
     for item in candidates:
         item['近5日平均成交额'] = _five_day_average_turnover(item['代码'])
 
-    # 列表读取不得触发历史写入；观测由外部调度的 CLI 任务采集。
+    # Persist only normalized valid observations; missing fields are never backfilled.
     try:
-        from services.lof_premium_persistence import persistence_for_funds
+        from services.lof_detail import record_observations
+        from services.normalizer import normalize_lof_list
 
-        persistence = persistence_for_funds([item['代码'] for item in result], fetched_at.date())
-        for item in result:
-            item['溢价持续性'] = persistence.get(item['代码'])
+        record_observations(normalize_lof_list(result))
     except Exception as exc:
-        logger.warning('[LOF] premium persistence read failed: %s', exc)
-        for item in result:
-            item['溢价持续性'] = {
-                'consecutive_positive_sessions': None,
-                'status': 'unavailable',
-                'as_of': None,
-                'history_started_on': None,
-                'reason': '连续正溢价历史暂不可用',
-            }
+        logger.warning('[LOF] observation persistence failed: %s', exc)
 
     return result
 
