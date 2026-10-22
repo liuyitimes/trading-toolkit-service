@@ -1,60 +1,207 @@
 name: Backend Deploy to Render
 
+# 发布只在「Backend CI 在同一提交上全绿」之后执行，避免绕过镜像冒烟与迁移冒烟。
 on:
-  push:
+  workflow_run:
+    workflows: [Backend CI]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+# 生产发布串行执行且不允许被取消：中断在「已触发部署、尚未验证」之间会留下未知状态。
+concurrency:
+  group: backend-production-deploy
+  cancel-in-progress: false
+
+env:
+  # 健康检查总预算：Render 免费实例冷启动 + 容器构建 + Alembic 迁移，12 分钟。
+  HEALTHCHECK_ATTEMPTS: '48'
+  HEALTHCHECK_INTERVAL: '15'
+
 jobs:
-  verify:
+  deploy:
+    name: 发布到 Render
+    if: >-
+      (github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success') ||
+      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: 检出待发布提交
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+
+      - name: 记录待发布提交
+        id: revision
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: 配置 Python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: pip
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -r cloudrun/requirements-dev.txt
-      - name: Run service tests
-        env:
-          USE_MOCK: true
-        run: python -m pytest cloudrun/tests backtest/tests
+          cache: 'pip'
+          cache-dependency-path: cloudrun/requirements-dev.txt
 
-  deploy:
-    needs: verify
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check deployment configuration
+      - name: 手动触发时就地验证
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          USE_MOCK: 'true'
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r cloudrun/requirements-dev.txt
+          python -m pytest cloudrun/tests backtest/tests -q -p no:cacheprovider
+
+      - name: 校验发布配置
         id: configuration
         env:
           RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
           RENDER_HEALTHCHECK_URL: ${{ secrets.RENDER_HEALTHCHECK_URL }}
         run: |
-          if test -n "$RENDER_DEPLOY_HOOK_URL" && test -n "$RENDER_HEALTHCHECK_URL"; then
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "configured=false" >> "$GITHUB_OUTPUT"
+          set -eu
+          missing=''
+          [ -n "${RENDER_DEPLOY_HOOK_URL:-}" ] || missing="$missing RENDER_DEPLOY_HOOK_URL"
+          [ -n "${RENDER_HEALTHCHECK_URL:-}" ] || missing="$missing RENDER_HEALTHCHECK_URL"
+          if [ -n "$missing" ]; then
+            # 不再静默跳过：缺凭据时发布必须显式失败，否则会出现「绿灯但没发布」。
+            echo "::error::发布凭据缺失:$missing。请配置 GitHub Secrets 后重试。"
+            exit 1
           fi
-      - name: Trigger Render deployment
-        if: steps.configuration.outputs.configured == 'true'
+
+      - name: 解析上一个线上部署
+        id: previous
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          set -eu
+          if [ -z "${RENDER_API_KEY:-}" ] || [ -z "${RENDER_SERVICE_ID:-}" ]; then
+            echo "deploy_id=" >> "$GITHUB_OUTPUT"
+            echo "::notice::未配置 RENDER_API_KEY / RENDER_SERVICE_ID，自动回滚不可用，将走人工回滚路径。"
+            exit 0
+          fi
+          response="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            -H 'accept: application/json' \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys?limit=20")"
+          # 取最近一个处于 live 状态的部署作为回滚目标，即本次发布前的线上版本。
+          deploy_id="$(printf '%s' "$response" \
+            | python -c 'import json,sys; items=json.load(sys.stdin); live=[i["deploy"] for i in items if i.get("deploy",{}).get("status")=="live"]; print(live[0]["id"] if live else "")')"
+          echo "deploy_id=$deploy_id" >> "$GITHUB_OUTPUT"
+          echo "回滚目标部署: ${deploy_id:-<未识别>}"
+
+      - name: 触发 Render 部署
+        id: trigger
         env:
           RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          REVISION: ${{ steps.revision.outputs.sha }}
         run: |
-          test -n "$RENDER_DEPLOY_HOOK_URL"
-          curl --fail --show-error --silent --request POST "$RENDER_DEPLOY_HOOK_URL"
-      - name: Smoke check
-        if: steps.configuration.outputs.configured == 'true'
+          set -eu
+          # Deploy Hook 抓取的是 Render 服务所连分支的最新提交；本次运行的提交
+          # 已记录在发布归档中，用于事后核对线上版本。
+          curl --fail --show-error --silent --request POST "$RENDER_DEPLOY_HOOK_URL" > /dev/null
+          echo "已触发部署，本次提交 $REVISION"
+
+      - name: 等待健康检查通过
+        id: smoke
         env:
           RENDER_HEALTHCHECK_URL: ${{ secrets.RENDER_HEALTHCHECK_URL }}
         run: |
-          test -n "$RENDER_HEALTHCHECK_URL"
-          for attempt in $(seq 1 18); do
-            if curl --fail --show-error --silent "$RENDER_HEALTHCHECK_URL"; then
+          set -eu
+          attempt=1
+          while [ "$attempt" -le "$HEALTHCHECK_ATTEMPTS" ]; do
+            if body="$(curl --fail --silent --show-error --max-time 20 "$RENDER_HEALTHCHECK_URL" 2>/dev/null)"; then
+              # 只校验状态码不足以保证可用：还要确认统一信封与 status 字段。
+              if printf '%s' "$body" | grep -q '"success": *true' \
+                 && printf '%s' "$body" | grep -q '"status": *"ok"'; then
+                echo "健康检查通过（第 $attempt 次尝试）：$body"
+                echo "healthy=true" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              echo "第 $attempt 次：响应未通过信封校验：$body"
+            else
+              echo "第 $attempt 次：健康检查不可达"
+            fi
+            attempt=$((attempt + 1))
+            sleep "$HEALTHCHECK_INTERVAL"
+          done
+          echo "::error::发布后健康检查在 $((HEALTHCHECK_ATTEMPTS * HEALTHCHECK_INTERVAL)) 秒内未通过，判定发布失败。"
+          exit 1
+
+      - name: 自动回滚到发布前版本
+        if: failure() && steps.trigger.outcome == 'success'
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+          PREVIOUS_DEPLOY_ID: ${{ steps.previous.outputs.deploy_id }}
+          RENDER_HEALTHCHECK_URL: ${{ secrets.RENDER_HEALTHCHECK_URL }}
+        run: |
+          set -eu
+          if [ -z "${RENDER_API_KEY:-}" ] || [ -z "${RENDER_SERVICE_ID:-}" ] || [ -z "${PREVIOUS_DEPLOY_ID:-}" ]; then
+            {
+              echo '### 自动回滚不可用，需人工处置'
+              echo ''
+              echo '- 缺失前提：`RENDER_API_KEY` / `RENDER_SERVICE_ID` 未配置，或未能识别上一个 live 部署。'
+              echo '- 处置步骤：Render Dashboard → 服务 `trading-toolkit-api` → Deploys → 选中上一个 `live` 部署 → Rollback。'
+              echo '- 数据库注意：若本次发布已执行破坏性迁移，回滚前先确认迁移可逆（`alembic downgrade -1`），否则保留新实例并前滚修复。'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::需要人工回滚，详见 job summary。"
+            exit 1
+          fi
+          curl --fail --show-error --silent \
+            --request POST \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            -H 'content-type: application/json' \
+            -H 'accept: application/json' \
+            --data "{\"deployId\": \"$PREVIOUS_DEPLOY_ID\"}" \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/rollback" > /dev/null
+          echo "已请求回滚到部署 $PREVIOUS_DEPLOY_ID，等待恢复..."
+          attempt=1
+          while [ "$attempt" -le "$HEALTHCHECK_ATTEMPTS" ]; do
+            if curl --fail --silent --max-time 20 "$RENDER_HEALTHCHECK_URL" 2>/dev/null \
+               | grep -q '"status": *"ok"'; then
+              echo "回滚后健康检查通过（第 $attempt 次尝试）"
+              echo '### 已自动回滚到上一个线上版本' >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
-            sleep 10
+            attempt=$((attempt + 1))
+            sleep "$HEALTHCHECK_INTERVAL"
           done
+          echo "::error::回滚后健康检查仍未通过，立即人工介入。"
           exit 1
+
+      - name: 归档发布记录
+        if: always()
+        env:
+          REVISION: ${{ steps.revision.outputs.sha }}
+          PREVIOUS_DEPLOY_ID: ${{ steps.previous.outputs.deploy_id }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          set -eu
+          mkdir -p release-record
+          cat > release-record/release.json <<JSON
+          {
+            "service": "trading-toolkit-api",
+            "revision": "${REVISION}",
+            "rollback_target_deploy": "${PREVIOUS_DEPLOY_ID}",
+            "workflow_run_id": "${GITHUB_RUN_ID}",
+            "trigger": "${GITHUB_EVENT_NAME}",
+            "outcome": "${JOB_STATUS}",
+            "healthy": "${{ steps.smoke.outputs.healthy }}",
+            "recorded_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          JSON
+          cat release-record/release.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 上传发布记录
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-release-record-${{ github.run_id }}
+          path: release-record/release.json
+          retention-days: 90

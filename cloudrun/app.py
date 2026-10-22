@@ -667,13 +667,15 @@ def admin_health():
             }
 
     from models.database import DATABASE_URL
+    from utils.dburl import is_postgresql
+
     return api_response({
         'status': 'ok',
         'primary_source': factory._primary_name,
         'cache_backend': cache.backend_type,
         'sources': sources_status,
         'database': {
-            'type': 'sqlite' if 'sqlite' in DATABASE_URL else 'mysql',
+            'type': 'postgresql' if is_postgresql(DATABASE_URL) else 'sqlite',
             'url': DATABASE_URL.split('@')[-1] if '@' in DATABASE_URL else DATABASE_URL,
         },
     })

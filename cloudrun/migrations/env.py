@@ -19,6 +19,8 @@ import models.lof_premium  # noqa: F401
 import models.placement  # noqa: F401
 import models.user  # noqa: F401
 
+from utils.dburl import normalize_database_url
+
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
@@ -35,7 +37,9 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 config.set_main_option(
     'sqlalchemy.url',
-    os.environ.get('DATABASE_URL', 'sqlite:///trading_toolkit.db'),
+    normalize_database_url(
+        os.environ.get('DATABASE_URL', 'sqlite:///trading_toolkit.db')
+    ),
 )
 
 # other values from the config, defined by the needs of env.py,

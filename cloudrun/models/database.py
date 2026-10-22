@@ -11,11 +11,17 @@ from contextlib import contextmanager
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 
-# 默认 SQLite，可通过环境变量切换为 PostgreSQL
-DATABASE_URL = os.environ.get('DATABASE_URL', 'sqlite:///trading_toolkit.db')
+from utils.dburl import is_postgresql, normalize_database_url
+
+# 默认 SQLite，可通过环境变量切换为 PostgreSQL。
+# 必须显式补齐 PostgreSQL 驱动名：托管平台注入的 `postgresql://` 会随 SQLAlchemy
+# 主版本改变默认 DBAPI（2.1 起为 psycopg v3），镜像只提供 psycopg2-binary。
+DATABASE_URL = normalize_database_url(
+    os.environ.get('DATABASE_URL', 'sqlite:///trading_toolkit.db')
+)
 
 # 根据数据库类型设置不同参数
-if DATABASE_URL.startswith('postgresql'):
+if is_postgresql(DATABASE_URL):
     engine = create_engine(
         DATABASE_URL,
         echo=False,
@@ -57,7 +63,6 @@ def init_db():
     """初始化本地 SQLite；生产数据库由 Alembic 迁移管理。"""
     if not DATABASE_URL.startswith('sqlite'):
         return
-
     Base.metadata.create_all(bind=engine)
     # `create_all` does not alter an existing SQLite table. Keep additive local
     # migrations here because the service intentionally has no external migration

@@ -6,32 +6,174 @@ on:
   pull_request:
     branches: ['main']
 
+permissions:
+  contents: read
+
+# 同一分支的新提交取代正在运行的 CI，避免排队浪费。
+# 生产分支例外，见 backend-deploy.yml（串行执行、不取消）。
+concurrency:
+  group: backend-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
+    name: 单元测试（SQLite）
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: 配置 Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
+          # 缓存键必须指向真实存在的依赖清单，否则 setup-python 找不到文件、缓存恒失效。
+          cache-dependency-path: cloudrun/requirements-dev.txt
 
-      - name: Install dependencies
+      - name: 安装依赖
         run: |
-          pip install --upgrade pip
-            pip install -r cloudrun/requirements-dev.txt
+          python -m pip install --upgrade pip
+          python -m pip install -r cloudrun/requirements-dev.txt
 
-      - name: Run API log self-check
+      - name: 语法编译检查
+        run: python -m compileall -q cloudrun backtest
+
+      - name: API 日志自检
+        working-directory: cloudrun
         env:
-          USE_MOCK: true
-          ENABLE_ADMIN_API: true
+          USE_MOCK: 'true'
+          ENABLE_ADMIN_API: 'true'
+        run: python scripts/test_api_logs.py
+
+      - name: 运行测试
+        env:
+          USE_MOCK: 'true'
+        run: python -m pytest cloudrun/tests backtest/tests -q -p no:cacheprovider
+
+  migration-smoke:
+    name: PostgreSQL 迁移冒烟
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: trading_toolkit
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # 刻意使用托管平台注入的原始形态（不带驱动名），验证运行期归一化。
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/trading_toolkit
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 配置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: cloudrun/requirements-dev.txt
+
+      - name: 安装依赖
         run: |
-          cd cloudrun
-          python scripts/test_api_logs.py
+          python -m pip install --upgrade pip
+          python -m pip install -r cloudrun/requirements-dev.txt
 
-      - name: Run tests
+      - name: 空库迁移到最新版本
+        run: python -m alembic -c alembic.ini upgrade head
+
+      - name: 断言迁移版本可读
+        run: python -m alembic -c alembic.ini current
+
+      - name: 断言迁移后的核心表存在
+        run: |
+          python - <<'PY'
+          import os
+          import sys
+
+          sys.path.insert(0, 'cloudrun')
+          from sqlalchemy import create_engine, inspect
+          from utils.dburl import normalize_database_url
+
+          engine = create_engine(normalize_database_url(os.environ['DATABASE_URL']))
+          tables = set(inspect(engine).get_table_names())
+          required = {'alembic_version', 'lof_execution_rule', 'lof_execution_fund'}
+          missing = required - tables
+          if missing:
+              raise SystemExit(f'迁移后缺少表: {sorted(missing)}')
+          print(f'表结构就绪，共 {len(tables)} 张表')
+          PY
+
+      - name: 以生产形态加载应用
+        working-directory: cloudrun
         env:
-          USE_MOCK: true
-        run: python -m pytest cloudrun/tests backtest/tests
+          USE_MOCK: 'true'
+          ENABLE_ADMIN_API: 'false'
+        run: |
+          python -c "import app, models.database as d; print('app ok, driver =', d.engine.dialect.driver)"
+
+  container-smoke:
+    name: 镜像启动冒烟（PostgreSQL）
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: trading_toolkit
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 构建镜像
+        run: docker build -f cloudrun/Dockerfile -t trading-toolkit-service:ci .
+
+      - name: 启动容器并断言健康检查
+        run: |
+          set -eu
+          docker run -d --name smoke --network host \
+            -e DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5432/trading_toolkit" \
+            -e USE_MOCK=true \
+            -e ENABLE_ADMIN_API=false \
+            trading-toolkit-service:ci
+          healthy=0
+          for attempt in $(seq 1 30); do
+            body="$(curl --fail --silent --max-time 5 http://127.0.0.1:8080/healthz || true)"
+            if printf '%s' "$body" | grep -q '"status": *"ok"'; then
+              echo "健康检查通过: $body"
+              healthy=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$healthy" -ne 1 ]; then
+            echo '容器未在 60 秒内通过健康检查，启动日志如下：' >&2
+            docker logs smoke >&2 || true
+            exit 1
+          fi
+
+      - name: 断言非 PostgreSQL 配置下容器拒绝启动
+        run: |
+          set -eu
+          if docker run --rm -e DATABASE_URL=sqlite:///trading_toolkit.db trading-toolkit-service:ci; then
+            echo '容器在 SQLite 配置下仍然启动，生产兜底失效' >&2
+            exit 1
+          fi
+          echo 'SQLite 配置已按预期被拒绝'
+
+      - name: 清理
+        if: always()
+        run: docker rm -f smoke >/dev/null 2>&1 || true

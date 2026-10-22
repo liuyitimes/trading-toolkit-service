@@ -215,7 +215,7 @@ class LofExecutionRulesTest(unittest.TestCase):
             now=datetime(2026, 8, 10, 16, 0),
         )
 
-        resolved = resolve_execution_rules(db, ['501001'])['501001']
+        resolved = resolve_execution_rules(db, ['501001'], now=datetime(2026, 8, 10, 16, 0))['501001']
         self.assertTrue(result['acquired'])
         self.assertEqual(calls, ['501001'])
         self.assertTrue(resolved['subscription_open'])
