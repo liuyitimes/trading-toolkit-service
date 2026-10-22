@@ -6,6 +6,7 @@
     { "id": "market.overview", "method": "GET", "path": "/api/v1/market/overview" },
     { "id": "market.sentiment", "method": "GET", "path": "/api/v1/market/sentiment" },
     { "id": "market.fundFlow", "method": "GET", "path": "/api/v1/market/fund-flow" },
+    { "id": "market.calendar", "method": "GET", "path": "/api/v1/market/calendar" },
     { "id": "convertible.list", "method": "GET", "path": "/api/v1/convertible/list" },
     { "id": "convertible.signals", "method": "GET", "path": "/api/v1/convertible/signals" },
     { "id": "convertible.temperature", "method": "GET", "path": "/api/v1/convertible/temperature" },
