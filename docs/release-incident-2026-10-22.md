@@ -12,6 +12,7 @@
 | 表现 | 发布后新实例反复重启，`/healthz` 健康检查持续失败    |
 | 根因一 | SQLAlchemy 2.1 将 `postgresql://` 的默认 DBAPI 从 psycopg2 改为 psycopg（v3），镜像只安装 psycopg2-binary |
 | 根因二 | 合并后迁移链出现两个 head，`alembic upgrade head` 直接拒绝执行（见 10.2） |
+| 根因三 | `DATABASE_URL` 指向的 Render Postgres 实例已被回收（免费档到期），容器 DNS 解析失败、启动即退出（见 11） |
 | 触发点 | 容器启动命令中的 `alembic -c /app/alembic.ini upgrade head` |
 | 放大因素 | CI 全程使用 SQLite，从不执行 PostgreSQL 迁移，也从不构建/启动镜像 |
 | 修复 | 连接串在进入 `create_engine` 与 Alembic 前统一补齐 `+psycopg2`；迁移链收口为单一 head；新增镜像级与迁移级 CI 门禁 |
@@ -234,3 +235,47 @@ alembic upgrade head → Multiple head revisions are present
 前端从 CI 到生产验证整条链路走通，说明新的 `wrangler@4` 发布方式与"哈希入口 + immutable"校验在真实环境可用。
 
 后端 `Backend Deploy to Render` 在本记录写作时仍未收敛（见 10.3），其状态需在 GitHub Actions 页面确认；若因网络不可达判定失败，流水线会走人工回滚路径并在 job summary 给出手工步骤。
+
+## 11. 真正的生产根因：数据库实例已被回收
+
+前 10 节修掉的是"即使数据库正常也起不来"的四个问题。但容器仍然起不来，Dashboard 日志给出了最后一条原因：
+
+```
+alembic target: dpg-d9iru5ernols73fptis0-a/trading_toolkit_db
+psycopg2.OperationalError: could not translate host name
+"dpg-d9iru5ernols73fptis0-a" to address: Name or service not known
+==> Exited with status 1
+==> No open ports detected
+```
+
+`DATABASE_URL` 里的 `dpg-d9iru5ernols73fptis0-a` 是 Render 内部数据库主机名，但该实例**已经不存在**：通过 Render API 查询，账号下 `postgres` 与 `key-value` 资源均为 **0 个**。免费档 Postgres 带 `expiresAt`（30 天到期回收），到期后主机名不再解析——所以这不是区域错配，也不是连接串格式问题，而是外部依赖蒸发。
+
+CI 里所有门禁都不可能发现这一点：迁移冒烟用的是 CI 自己拉的 `postgres:16` 容器，镜像冒烟连的也是它，生产库是否存在不在任何测试的可见范围内。
+
+### 11.1 处置
+
+| 步骤 | 动作 |
+| --- | --- |
+| 1 | 用 Render API 确认服务 `srv-d98bskdaeets73fmdsdg`（oregon，free）与已失效的库 |
+| 2 | 在**同区域**新建 free Postgres：`dpg-dbct8ka9lscs73f1nkq0-a`，PG 16，oregon，`expiresAt = 2026-11-21` |
+| 3 | 用 `PUT /v1/services/{id}/env-vars/DATABASE_URL` **只改这一个变量**（不整体覆盖，避免冲掉 `CORS_ALLOWED_ORIGINS`） |
+| 4 | `POST /v1/services/{id}/deploys` 触发部署 |
+| 5 | 轮询部署到 `live`（17:18:43 启动，17:19:04 就绪） |
+
+### 11.2 验证结果
+
+```
+GET /healthz            → 200  {"data":{"status":"ok"},"success":true}
+GET /api/v1/placement/list → 200  返回真实公告数据
+GET /api/v1/lof/list       → 200
+GET /api/v1/market/calendar→ 200
+```
+
+迁移在空库上完整跑通（正是新增的单一 head 链条），gunicorn 正常监听，健康检查信封与流水线校验条件完全一致。
+
+### 11.3 遗留风险（重要）
+
+- **新库同样是免费档，`expiresAt = 2026-11-21`，30 天后会再次被回收，故障会原样复发。**
+- 要么在到期前迁到付费档（约 $6–7/月起），要么把数据落到外部免费库（Neon / Supabase），并给 `DATABASE_URL` 加一个到期前的主动探测。
+- 现有能力缺口：CI 覆盖了"代码 + 镜像 + 迁移链"，但**不覆盖外部依赖存在性**。建议加一个每日定时探测：`/healthz` 不通即告警（飞书），而不是等用户发现页面空白。
+- 本次排查的关键教训：健康检查失败时，"20 分钟等不来响应"和"容器根本没起来"是两件事。日志里 `No open ports detected` 是最强信号，比健康检查超时更早、更确定。
