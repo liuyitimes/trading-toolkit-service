@@ -3,18 +3,19 @@
 - 日期：2026-10-22
 - 范围：`trading-toolkit-service`（Render 生产服务）、`trading-toolkit-web`（Cloudflare Pages）
 - 处置方式：无人值守排查—修复—验证，本地可复现证据全留痕
-- 当前状态：已修复并通过本地回归；**未推送远程、未触发真实发布**（见第 10 节）
+- 当前状态：已推送 main 并触发真实发布。前端发布已成功并在线验证；后端 CI 全绿、Render 发布任务见第 10 节
 
 ## 1. 结论摘要
 
 | 项目 | 内容                                                 |
 | ---- | ---------------------------------------------------- |
 | 表现 | 发布后新实例反复重启，`/healthz` 健康检查持续失败    |
-| 根因 | SQLAlchemy 2.1 将 `postgresql://` 的默认 DBAPI 从 psycopg2 改为 psycopg（v3），镜像只安装 psycopg2-binary |
+| 根因一 | SQLAlchemy 2.1 将 `postgresql://` 的默认 DBAPI 从 psycopg2 改为 psycopg（v3），镜像只安装 psycopg2-binary |
+| 根因二 | 合并后迁移链出现两个 head，`alembic upgrade head` 直接拒绝执行（见 10.2） |
 | 触发点 | 容器启动命令中的 `alembic -c /app/alembic.ini upgrade head` |
 | 放大因素 | CI 全程使用 SQLite，从不执行 PostgreSQL 迁移，也从不构建/启动镜像 |
-| 修复 | 连接串在进入 `create_engine` 与 Alembic 前统一补齐 `+psycopg2`；新增镜像级与迁移级 CI 门禁 |
-| 附带修复 | 1 个依赖当前系统日期的用例导致 main 长期红灯；管理健康端点把 PostgreSQL 谎报为 `mysql` |
+| 修复 | 连接串在进入 `create_engine` 与 Alembic 前统一补齐 `+psycopg2`；迁移链收口为单一 head；新增镜像级与迁移级 CI 门禁 |
+| 附带修复 | 依赖当前系统日期的用例导致 main 长期红灯；可转债完整性校验的调用点在合并中丢失；发布任务会因缺超时而悬空 |
 
 ## 2. 时间线
 
@@ -172,8 +173,64 @@ Authorization: Bearer $RENDER_API_KEY
 | 前端契约版本 | 契约校验依赖服务端仓库，默认取 `main` | 已改为读取仓库变量 `SERVICE_CONTRACT_REF`，需要时可固定 |
 | 无覆盖率门禁 | 用例数增长但无覆盖率下限 | 后续引入 `pytest-cov` 并设阈值 |
 
-## 9. 本次未做的验证（如实声明）
+## 9. 执行边界（如实声明）
 
-- **未推送远程分支、未触发真实 Render / Cloudflare 发布**：推送会直接引发生产变更，需由你确认后执行。
-- **未在 WSL 中执行 `scripts/wsl/trading-toolkit deploy`**：本会话的安全策略禁止启动 `wsl.exe`，无法进入 WSL 运行本地受管服务；本地验证改为在 Windows 侧完成等价的构建、契约、冒烟与浏览器用例。你的本地服务仍按 WSL 路径交付，本次改动未引入任何 Windows 专属假设。
-- **未在真实 PostgreSQL 上跑迁移**：本地无可用实例，改用 `alembic upgrade head --sql` 离线生成 SQL + 驱动方言断言；真实迁移验证由新增的 `migration-smoke` 与 `container-smoke` 在 CI 中完成。
+已做：
+
+- 两个仓库均已完成本地全量回归，并推送到远端 `main`，触发真实 CI 与发布。
+- 真实 PostgreSQL 上的迁移与容器启动，由新增的 `migration-smoke`、`container-smoke` 在 GitHub runner 上完成验证（结果见第 10 节）。
+
+未做：
+
+- **未在 WSL 中执行 `scripts/wsl/trading-toolkit deploy`**：本会话的安全策略把 `wsl.exe` 列入程序黑名单，无法从 Windows 侧进入 WSL 运行本地受管服务。本地验证改为在 Windows 侧完成等价的构建、契约、冒烟与浏览器用例；改动未引入任何 Windows 专属假设，WSL 受管交付脚本未被修改。
+- **未能读取 GitHub Actions 与 Render 的运行日志**：`gh` 未登录、匿名 API 配额耗尽、Render 无 API Key，排障依赖 workflow 状态与步骤级结果，而非原始日志。
+
+## 10. 第二轮：整合远端与真实发布
+
+本地 `main` 落后远端（服务端落后 10 / 领先 6，前端落后 10 / 领先 1）。按要求先 `git fetch` 再安全整合，禁止强推。整合过程中又暴露出两个独立问题，均为**远端 main 既有问题**，不是本次改动引入。
+
+### 10.1 问题三：合并把可转债完整性校验的调用点丢了
+
+- 远端 `64c6d3b` 引入了 `services/market_data_validation.py`，但合并时两个调用边界（列表输出、快照写入）都被丢弃，模块成了死代码。
+- 后果不是"测试红了"这么简单：缺转股字段的行换算出的转股价值与溢价率恒为 0，在双低排序里会被排成最优标的。对一个用于选债的工具，这是会直接影响交易判断的脏数据。
+- 处置：按 `openspec/changes/validate-market-data-snapshots` 的规格恢复两个边界，并补上加载边界（历史不合格快照在重启时丢弃）。
+- 同时把两个用例对齐到现行实现（它们写的是已被合并取代的分键目录设计：`get_stale` / `CACHE_SNAPSHOT_DIR` 在实现中并不存在）。
+
+### 10.2 问题四：迁移链出现两个 head，容器必然起不来
+
+`e1a2_lof_premium` 与 `lof_premium_observations` 都从 `d9is_placement_snapshot` 派生：
+
+```
+alembic heads → e1a2_lof_premium (head)
+                lof_execution_rules_registry (head)
+alembic upgrade head → Multiple head revisions are present
+```
+
+容器 CMD 固定执行 `alembic upgrade head`，因此这是**发布失败的第二条独立原因**，与驱动问题叠加。更麻烦的是两条分支创建了同名但不同列的三张表（`trading_calendar`、`lof_premium_observation`、`lof_premium_job`），即使强行升级也会撞 `table already exists`。
+
+判定与处置：
+
+- 以 `cloudrun/models/lof_premium.py` 为准：模型用的是 `nav_published_date` / `write_source` / `version` / `job_type` / `attempt_count`，与 `lof_premium_observations` 一致；`e1a2` 的 `nav_date` / `captured_by` / `job_key` 是被取代的草稿。
+- `e1a2_lof_premium` 保留修订号（兼容已打标的数据库，避免 `Can't locate revision`），改为空修订。
+- 新增 `m1022_merge_lof_heads` 合并修订收口为单一 head。
+- 新增 `tests/test_migrations.py`：head 必须唯一、不得有孤立修订、不得重复建表。
+
+### 10.3 问题五：发布任务会悬空
+
+首次真实发布时，`Backend Deploy to Render` 运行 20 分钟仍未收敛。原因是健康检查按「次数 × 间隔」计预算，而每轮 curl 自身可占满 `--max-time`，最坏耗时远超注释声称的 12 分钟；同时 Render API 的若干 curl 完全没有超时，网络挂起会把任务挂到 GitHub 默认的 6 小时上限。
+
+处置：改为墙钟 deadline（20 分钟）、单次 curl 有界收缩、所有外部调用补 `--connect-timeout` / `--max-time`、给 job 加 `timeout-minutes: 35`。12 个工作流片段全部通过 `bash -n`。
+
+### 10.4 真实发布结果
+
+| 项目 | 结果 |
+| --- | --- |
+| 服务端 `b89f5cf` Backend CI | **success**：单元测试、PostgreSQL 迁移冒烟、镜像启动冒烟三个 job 全绿 |
+| 服务端 `d63f94d` Backend CI | failure（首次推送，暴露双 head 问题），部署被正确拦下、未发布 |
+| 前端 `750f781` CI | **success** |
+| 前端 `750f781` Deploy to Cloudflare Pages | **success** |
+| 前端生产站点 | 已切换：`/assets/index-UKLh1Axn.js`，`Cache-Control: public, max-age=31536000, immutable` |
+
+前端从 CI 到生产验证整条链路走通，说明新的 `wrangler@4` 发布方式与"哈希入口 + immutable"校验在真实环境可用。
+
+后端 `Backend Deploy to Render` 在本记录写作时仍未收敛（见 10.3），其状态需在 GitHub Actions 页面确认；若因网络不可达判定失败，流水线会走人工回滚路径并在 job summary 给出手工步骤。
