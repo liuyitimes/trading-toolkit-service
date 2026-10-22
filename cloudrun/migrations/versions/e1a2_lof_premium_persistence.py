@@ -1,14 +1,27 @@
-"""新增 LOF 溢价观测、交易日历和任务进度
+"""新增 LOF 溢价观测、交易日历和任务进度（已合并为空修订）
 
 Revision ID: e1a2_lof_premium
 Revises: d9is_placement_snapshot
 Create Date: 2026-08-04
+
+历史说明：本修订与 `lof_premium_observations` 各自从 `d9is_placement_snapshot`
+派生，创建了**同名但不同列定义**的三张表（trading_calendar、
+lof_premium_observation、lof_premium_job）。两者同时存在于迁移链中会导致：
+
+1. `alembic upgrade head` 报 "Multiple head revisions are present"；
+2. 即使强行升级，第二条分支建同名表也会直接失败。
+
+以 `cloudrun/models/lof_premium.py` 为准判定：模型用的是
+`nav_published_date` / `write_source` / `version` / `job_type` / `attempt_count`
+这一组列，即 `lof_premium_observations` 的定稿版本。本修订的行定义（`nav_date`、
+`captured_by`、`source_version`、`job_key`）与模型不符，属于被取代的草稿。
+
+因此这里保留修订号（兼容已经打过 `e1a2_lof_premium` 标记的数据库，避免
+"Can't locate revision" 报错），但实际不再执行任何 DDL，由
+`m1022_merge_lof_heads` 把两条分支收口成单一 head。
 """
 
 from typing import Sequence, Union
-
-from alembic import op
-import sqlalchemy as sa
 
 
 revision: str = 'e1a2_lof_premium'
@@ -18,58 +31,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        'trading_calendar',
-        sa.Column('trading_date', sa.Date(), nullable=False),
-        sa.Column('market', sa.String(length=20), nullable=False, server_default='cn-a'),
-        sa.Column('source', sa.String(length=100), nullable=False),
-        sa.Column('source_version', sa.String(length=100), nullable=True),
-        sa.Column('imported_at', sa.DateTime(), nullable=False, server_default=sa.text('CURRENT_TIMESTAMP')),
-        sa.PrimaryKeyConstraint('trading_date'),
-    )
-    op.create_table(
-        'lof_premium_observation',
-        sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
-        sa.Column('fund_code', sa.String(length=20), nullable=False),
-        sa.Column('trading_date', sa.Date(), nullable=False),
-        sa.Column('close_price', sa.Numeric(precision=18, scale=6), nullable=False),
-        sa.Column('unit_nav', sa.Numeric(precision=18, scale=6), nullable=False),
-        sa.Column('premium_rate', sa.Numeric(precision=12, scale=6), nullable=False),
-        sa.Column('price_source', sa.String(length=100), nullable=False),
-        sa.Column('price_source_url', sa.String(length=1000), nullable=True),
-        sa.Column('nav_source', sa.String(length=100), nullable=False),
-        sa.Column('nav_source_url', sa.String(length=1000), nullable=True),
-        sa.Column('nav_date', sa.Date(), nullable=False),
-        sa.Column('captured_by', sa.String(length=20), nullable=False, server_default='capture'),
-        sa.Column('source_version', sa.Integer(), nullable=False, server_default='1'),
-        sa.Column('observed_at', sa.DateTime(), nullable=False, server_default=sa.text('CURRENT_TIMESTAMP')),
-        sa.Column('updated_at', sa.DateTime(), nullable=False, server_default=sa.text('CURRENT_TIMESTAMP')),
-        sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('fund_code', 'trading_date', name='uq_lof_premium_observation_fund_date'),
-    )
-    op.create_index(op.f('ix_lof_premium_observation_fund_code'), 'lof_premium_observation', ['fund_code'], unique=False)
-    op.create_index(op.f('ix_lof_premium_observation_trading_date'), 'lof_premium_observation', ['trading_date'], unique=False)
-    op.create_table(
-        'lof_premium_job',
-        sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
-        sa.Column('job_key', sa.String(length=100), nullable=False),
-        sa.Column('status', sa.String(length=20), nullable=False, server_default='queued'),
-        sa.Column('cursor', sa.String(length=100), nullable=True),
-        sa.Column('attempts', sa.Integer(), nullable=False, server_default='0'),
-        sa.Column('started_at', sa.DateTime(), nullable=True),
-        sa.Column('completed_at', sa.DateTime(), nullable=True),
-        sa.Column('last_error', sa.Text(), nullable=True),
-        sa.Column('updated_at', sa.DateTime(), nullable=False, server_default=sa.text('CURRENT_TIMESTAMP')),
-        sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('job_key'),
-    )
-    op.create_index(op.f('ix_lof_premium_job_status'), 'lof_premium_job', ['status'], unique=False)
+    """空修订：表结构由 lof_premium_observations 负责创建。"""
 
 
 def downgrade() -> None:
-    op.drop_index(op.f('ix_lof_premium_job_status'), table_name='lof_premium_job')
-    op.drop_table('lof_premium_job')
-    op.drop_index(op.f('ix_lof_premium_observation_trading_date'), table_name='lof_premium_observation')
-    op.drop_index(op.f('ix_lof_premium_observation_fund_code'), table_name='lof_premium_observation')
-    op.drop_table('lof_premium_observation')
-    op.drop_table('trading_calendar')
+    """空修订：无需撤销任何结构变更。"""
