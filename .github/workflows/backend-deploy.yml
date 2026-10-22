@@ -17,8 +17,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # 健康检查总预算：Render 免费实例冷启动 + 容器构建 + Alembic 迁移，12 分钟。
-  HEALTHCHECK_ATTEMPTS: '48'
+  # 健康检查墙钟预算（秒）：Render 免费实例冷启动 + Docker 构建 + Alembic 迁移。
+  # 免费实例休眠后再部署，构建常常超过 10 分钟，预算必须留够，否则会把
+  # 「还在构建」误判成「发布失败」并触发回滚。
+  HEALTHCHECK_BUDGET: '1200'
   HEALTHCHECK_INTERVAL: '15'
 
 jobs:
@@ -29,6 +31,8 @@ jobs:
       github.event.workflow_run.conclusion == 'success') ||
       github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    # 兜底：任何一步的网络调用挂住都不能让发布任务悬着数小时。
+    timeout-minutes: 35
     steps:
       - name: 检出待发布提交
         uses: actions/checkout@v4
@@ -86,6 +90,7 @@ jobs:
             exit 0
           fi
           response="$(curl --fail --silent --show-error \
+            --connect-timeout 10 --max-time 30 \
             -H "Authorization: Bearer $RENDER_API_KEY" \
             -H 'accept: application/json' \
             "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys?limit=20")"
@@ -104,7 +109,8 @@ jobs:
           set -eu
           # Deploy Hook 抓取的是 Render 服务所连分支的最新提交；本次运行的提交
           # 已记录在发布归档中，用于事后核对线上版本。
-          curl --fail --show-error --silent --request POST "$RENDER_DEPLOY_HOOK_URL" > /dev/null
+          curl --fail --show-error --silent --connect-timeout 10 --max-time 60 \
+            --request POST "$RENDER_DEPLOY_HOOK_URL" > /dev/null
           echo "已触发部署，本次提交 $REVISION"
 
       - name: 等待健康检查通过
@@ -113,9 +119,17 @@ jobs:
           RENDER_HEALTHCHECK_URL: ${{ secrets.RENDER_HEALTHCHECK_URL }}
         run: |
           set -eu
+          # 用墙钟预算而不是「次数上限」：每轮 curl 自身可能耗时到 --max-time，
+          # 按次数计会让最坏耗时远超预期（曾出现发布任务悬空 20 分钟以上）。
+          deadline=$(( $(date +%s) + HEALTHCHECK_BUDGET ))
           attempt=1
-          while [ "$attempt" -le "$HEALTHCHECK_ATTEMPTS" ]; do
-            if body="$(curl --fail --silent --show-error --max-time 20 "$RENDER_HEALTHCHECK_URL" 2>/dev/null)"; then
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            remaining=$(( deadline - $(date +%s) ))
+            [ "$remaining" -gt 0 ] || break
+            timeout=$(( remaining < 25 ? remaining : 25 ))
+            if body="$(curl --fail --silent --show-error \
+                --connect-timeout 10 --max-time "$timeout" \
+                "$RENDER_HEALTHCHECK_URL" 2>/dev/null)"; then
               # 只校验状态码不足以保证可用：还要确认统一信封与 status 字段。
               if printf '%s' "$body" | grep -q '"success": *true' \
                  && printf '%s' "$body" | grep -q '"status": *"ok"'; then
@@ -125,12 +139,12 @@ jobs:
               fi
               echo "第 $attempt 次：响应未通过信封校验：$body"
             else
-              echo "第 $attempt 次：健康检查不可达"
+              echo "第 $attempt 次：健康检查不可达（剩余 $remaining 秒）"
             fi
             attempt=$((attempt + 1))
             sleep "$HEALTHCHECK_INTERVAL"
           done
-          echo "::error::发布后健康检查在 $((HEALTHCHECK_ATTEMPTS * HEALTHCHECK_INTERVAL)) 秒内未通过，判定发布失败。"
+          echo "::error::发布后健康检查在 ${HEALTHCHECK_BUDGET} 秒内未通过，判定发布失败。"
           exit 1
 
       - name: 自动回滚到发布前版本
@@ -154,6 +168,7 @@ jobs:
             exit 1
           fi
           curl --fail --show-error --silent \
+            --connect-timeout 10 --max-time 60 \
             --request POST \
             -H "Authorization: Bearer $RENDER_API_KEY" \
             -H 'content-type: application/json' \
@@ -161,9 +176,14 @@ jobs:
             --data "{\"deployId\": \"$PREVIOUS_DEPLOY_ID\"}" \
             "https://api.render.com/v1/services/$RENDER_SERVICE_ID/rollback" > /dev/null
           echo "已请求回滚到部署 $PREVIOUS_DEPLOY_ID，等待恢复..."
+          deadline=$(( $(date +%s) + HEALTHCHECK_BUDGET ))
           attempt=1
-          while [ "$attempt" -le "$HEALTHCHECK_ATTEMPTS" ]; do
-            if curl --fail --silent --max-time 20 "$RENDER_HEALTHCHECK_URL" 2>/dev/null \
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            remaining=$(( deadline - $(date +%s) ))
+            [ "$remaining" -gt 0 ] || break
+            timeout=$(( remaining < 25 ? remaining : 25 ))
+            if curl --fail --silent --connect-timeout 10 --max-time "$timeout" \
+                "$RENDER_HEALTHCHECK_URL" 2>/dev/null \
                | grep -q '"status": *"ok"'; then
               echo "回滚后健康检查通过（第 $attempt 次尝试）"
               echo '### 已自动回滚到上一个线上版本' >> "$GITHUB_STEP_SUMMARY"
