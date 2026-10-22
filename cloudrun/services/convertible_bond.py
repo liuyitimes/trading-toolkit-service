@@ -23,6 +23,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from services.http_client import sina_get, em_get, tencent_get
+from services.market_data_validation import is_complete_convertible_row
 from utils.convert import safe_float
 
 logger = logging.getLogger('trading_toolkit')
@@ -923,7 +924,7 @@ def get_convertible_bond_list():
 
         result = []
         for _, row in df.iterrows():
-            result.append({
+            item = {
                 'bond_code': str(row['bond_code']),
                 'bond_name': str(row['bond_name']),
                 'price': safe_float(row['price']),
@@ -947,7 +948,11 @@ def get_convertible_bond_list():
                 'bond_floor_discount_rate': safe_float(row.get('bond_floor_discount_rate', 0)),
                 'bond_cashflows': _parse_cashflows(row.get('bond_cashflows', '')),
                 'maturity_date': str(row.get('maturity_date', '')),
-            })
+            }
+            # 转股字段缺失的行换算出的转股价值/溢价率恒为 0，在双低排序里会被
+            # 当成最优标的，属于会误导交易判断的脏数据，必须在输出边界拦掉。
+            if is_complete_convertible_row(item):
+                result.append(item)
         return result
     except Exception as e:
         logger.warning(f'获取可转债列表失败: {e}')

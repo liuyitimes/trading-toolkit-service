@@ -9,6 +9,8 @@ import time
 from datetime import datetime, time as dt_time
 from pathlib import Path
 
+from services.market_data_validation import is_complete_convertible_list_payload
+
 logger = logging.getLogger('trading_toolkit')
 
 # TTL 配置（秒）
@@ -140,9 +142,19 @@ class CacheManager:
     def _load_snapshots(self):
         try:
             payload = json.loads(self._snapshot_path.read_text(encoding='utf-8'))
-            return payload if isinstance(payload, dict) else {}
         except (FileNotFoundError, OSError, json.JSONDecodeError, TypeError):
             return {}
+        if not isinstance(payload, dict):
+            return {}
+        # 历史遗留的不合格快照（缺关键转股字段或空列表）在加载时即丢弃，
+        # 避免进程重启后又把它当成最新可用数据返回给用户。
+        return {
+            key: entry
+            for key, entry in payload.items()
+            if self._accepts_snapshot(
+                key, entry.get('value') if isinstance(entry, dict) else None
+            )
+        }
 
     def get_snapshot(self, key: str):
         """读取跨进程保留的最近成功值，不受内存 TTL 影响。"""
@@ -213,7 +225,7 @@ class CacheManager:
                 self._backend.set(key, value, ttl)
             else:
                 self._backend.set(key, serialized, ex=ttl)
-            if not key.endswith(':_next_refresh'):
+            if not key.endswith(':_next_refresh') and self._accepts_snapshot(key, value):
                 with self._snapshot_lock:
                     self._snapshots[key] = {
                         'updated_at': time.time(),
@@ -222,6 +234,17 @@ class CacheManager:
                     self._write_snapshots()
         except Exception:
             pass
+
+    @staticmethod
+    def _accepts_snapshot(key: str, value) -> bool:
+        """可恢复快照的写入准入。
+
+        可转债列表必须完整且非空才允许覆盖快照，避免一次不合格刷新把用户可见的
+        最后一版完整数据替换成缺字段或空集合。
+        """
+        if key.startswith('convertible:list:'):
+            return is_complete_convertible_list_payload(value)
+        return True
 
     def delete(self, key: str):
         try:

@@ -72,50 +72,63 @@ class ConvertibleListValidationTest(unittest.TestCase):
 
 
 class ConvertibleSnapshotValidationTest(unittest.TestCase):
+    """可恢复快照的写入与加载边界。
+
+    契约对齐说明（2026-10-22）：快照存储为单文件（`CACHE_SNAPSHOT_PATH`），
+    读取方法为 `get_snapshot`。原先基于 `CACHE_SNAPSHOT_DIR` / `get_stale` 的
+    分键目录设计在合并中被远程版本取代，此处按现行存储重写，规格要求不变。
+    """
+
+    KEY = 'convertible:list:data:page=1'
+
+    COMPLETE = {
+        'total': 1, 'page': 1, 'page_size': 100,
+        'items': [{
+            'bond_code': '110001', 'bond_name': '完整转债', 'price': 120,
+            'stock_code': '600001', 'stock_name': '完整正股',
+            'conversion_price': 10, 'conversion_value': 100,
+        }],
+    }
+    INCOMPLETE = {
+        'total': 1, 'page': 1, 'page_size': 100,
+        'items': [{
+            'bond_code': '110072', 'bond_name': '缺失转债', 'price': 44.267,
+            'stock_code': '', 'stock_name': '',
+            'conversion_price': 0, 'conversion_value': 0,
+        }],
+    }
+
+    def _cache_in(self, directory):
+        snapshot_path = str(Path(directory) / 'api-cache.json')
+        with patch.dict('os.environ', {'CACHE_SNAPSHOT_PATH': snapshot_path}):
+            return CacheManager(), snapshot_path
+
     def test_incomplete_list_cannot_replace_last_complete_snapshot(self):
-        complete = {
-            'total': 1, 'page': 1, 'page_size': 100,
-            'items': [{
-                'bond_code': '110001', 'bond_name': '完整转债', 'price': 120,
-                'stock_code': '600001', 'stock_name': '完整正股',
-                'conversion_price': 10, 'conversion_value': 100,
-            }],
-        }
-        incomplete = {
-            'total': 1, 'page': 1, 'page_size': 100,
-            'items': [{
-                'bond_code': '110072', 'bond_name': '缺失转债', 'price': 44.267,
-                'stock_code': '', 'stock_name': '',
-                'conversion_price': 0, 'conversion_value': 0,
-            }],
-        }
+        with tempfile.TemporaryDirectory() as directory:
+            cache, _ = self._cache_in(directory)
+            cache.set(self.KEY, self.COMPLETE, 60)
+            cache.set(self.KEY, self.INCOMPLETE, 60)
 
-        with tempfile.TemporaryDirectory() as directory, \
-                patch.dict('os.environ', {'CACHE_SNAPSHOT_DIR': directory}):
-            cache = CacheManager()
-            cache.set('convertible:list:data:page=1', complete, 60)
-            cache.set('convertible:list:data:page=1', incomplete, 60)
+            # 快照必须保留最后一个合格载荷，不合格刷新不得覆盖。
+            self.assertEqual(cache.get_snapshot(self.KEY), self.COMPLETE)
 
-            self.assertEqual(cache.get('convertible:list:data:page=1'), complete)
-            self.assertEqual(cache.get_stale('convertible:list:data:page=1'), complete)
+    def test_empty_list_cannot_replace_last_complete_snapshot(self):
+        empty = {'total': 0, 'page': 1, 'page_size': 100, 'items': []}
+        with tempfile.TemporaryDirectory() as directory:
+            cache, _ = self._cache_in(directory)
+            cache.set(self.KEY, self.COMPLETE, 60)
+            cache.set(self.KEY, empty, 60)
+
+            # 上游故障返回空集合时，不应把用户可见的最后一版数据清空。
+            self.assertEqual(cache.get_snapshot(self.KEY), self.COMPLETE)
 
     def test_legacy_incomplete_snapshot_is_not_read_after_restart(self):
-        incomplete = {
-            'total': 1, 'page': 1, 'page_size': 100,
-            'items': [{
-                'bond_code': '110072', 'bond_name': '缺失转债', 'price': 44.267,
-                'stock_code': '', 'stock_name': '',
-                'conversion_price': 0, 'conversion_value': 0,
-            }],
-        }
-
-        with tempfile.TemporaryDirectory() as directory, \
-                patch.dict('os.environ', {'CACHE_SNAPSHOT_DIR': directory}):
-            cache = CacheManager()
-            snapshot_path = cache._snapshot_path('convertible:list:data:page=1')
-            snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory() as directory:
+            snapshot_path = Path(directory) / 'api-cache.json'
             snapshot_path.write_text(
-                json.dumps({'saved_at': 0, 'data': incomplete}), encoding='utf-8'
+                json.dumps({self.KEY: {'updated_at': 0, 'value': self.INCOMPLETE}}),
+                encoding='utf-8',
             )
+            cache, _ = self._cache_in(directory)
 
-            self.assertIsNone(cache.get_stale('convertible:list:data:page=1'))
+            self.assertIsNone(cache.get_snapshot(self.KEY))
